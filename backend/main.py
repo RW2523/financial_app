@@ -21,12 +21,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database and load models on startup"""
+    """Initialize database on startup. Whisper loads on first audio request."""
     database.init_database()
-    audio_service.load_whisper_model("tiny")
     print("✅ Database initialized")
-    print("✅ Whisper model loaded")
-    print("✅ Ready to accept requests")
+    print("✅ Ready to accept requests (Whisper loads on first voice input)")
 
 
 @app.get("/")

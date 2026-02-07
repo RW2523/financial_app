@@ -56,6 +56,16 @@ streamlit run app.py --server.port 8501
 
 Access at: http://localhost:8501
 
+### 3b. Load sample data (optional)
+
+To pre-fill the app with realistic expenses for a Boston Master's student (every month of 2025 + Jan 2026):
+
+```bash
+python backend/seed_data.py
+```
+
+Then refresh **View Expenses** and **Monthly Summary** in the app.
+
 ### 4. Public Access (Optional)
 
 Install Cloudflared:
