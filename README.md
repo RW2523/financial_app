@@ -247,3 +247,8 @@ financial_app/
 1. **One-time:** Install Python 3.10+, create venv, `pip install -r requirements.txt`, install Ollama and `ollama pull llama3.1`.
 2. **Each session:** Start **backend** (Process 1), then **frontend** (Process 2). Optionally run **Telegram bot** (Process 4) and/or load **sample data** (Process 3).
 3. **Use:** Add expenses via web (text/voice) or Telegram; view in **View Expenses**; run **Monthly Summary** and **BI Dashboard**; export or embed for Power BI as needed.
+
+
+Note 
+
+8315431091:AAGV7l5siVKpx6htWSIH9AuMpvHI3aF1DL4 BOT - ID
