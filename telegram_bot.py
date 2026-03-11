@@ -57,6 +57,67 @@ MONTH_NAMES = {m.lower(): i for i, m in enumerate(month_name) if m}
 MONTH_ABBREV = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
                 "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
 
+# Guardrails: disclaimer and out-of-scope detection
+DISCLAIMER = (
+    "This bot helps with expense tracking and budgets only. "
+    "It is not professional financial, investment, tax, or legal advice."
+)
+
+
+def detect_out_of_scope(text: str) -> bool:
+    """True if user is asking for investment, tax, legal, or other non-expense-tracking advice."""
+    t = text.strip().lower()
+    if len(t) < 6:
+        return False
+    patterns = [
+        r"invest|investment|stock|stocks|equity|portfolio|mutual fund|etf",
+        r"crypto|bitcoin|ether|trading|day trading",
+        r"tax(es)?\s+(advice|return|deduct|refund)|irs|hmrc",
+        r"legal\s+advice|lawyer|attorney|sue",
+        r"should i (invest|buy stock|crypto)|is (bitcoin|stock) (good|safe)",
+        r"retirement\s+(plan|saving|account)|401k|roth|pension",
+        r"mortgage|loan\s+(advice|approval)|credit\s+score\s+advice",
+        r"insurance\s+(advice|recommend)|which\s+insurance",
+    ]
+    return any(re.search(p, t) for p in patterns)
+
+
+def get_guardrail_reply() -> str:
+    """Standard reply when user asks out-of-scope questions."""
+    return (
+        "I can only help with *expense tracking* and *budget limits* — "
+        "e.g. add expenses, see reports, or check if you can afford a purchase.\n\n"
+        "_" + DISCLAIMER + "_"
+    )
+
+
+def detect_greeting_or_small_talk(text: str) -> bool:
+    """True if message is a greeting or small talk, not an expense or command."""
+    t = text.strip().lower()
+    if not t or len(t) > 80:
+        return False
+    # Short greetings and thanks
+    if t in ("hi", "hello", "hey", "heya", "yo", "hi there", "hello there",
+             "thanks", "thank you", "thx", "ok", "okay", "cool", "nice", "great"):
+        return True
+    if re.match(r"^(hi|hello|hey|heya)\s*[!.]?$", t):
+        return True
+    if re.match(r"^how\s+are\s+you", t) or re.match(r"^what\'?s\s+up", t) or t == "sup":
+        return True
+    if re.match(r"^(good\s+)?(morning|afternoon|evening)\s*[!.]?$", t):
+        return True
+    return False
+
+
+def get_greeting_reply() -> str:
+    """Friendly reply for greetings / small talk."""
+    return (
+        "Hi! I'm your expense tracker bot. "
+        "Send me an expense in words (e.g. \"50 dollars on lunch yesterday\"), "
+        "ask for a *report* or *summary*, or ask \"can I afford 50 dollars for lunch?\". "
+        "Use /help for more."
+    )
+
 
 def run_ocr(image_path: str, lang: list = None) -> str:
     """Run OCR on image file. Returns extracted text. Sync, run in executor."""
@@ -148,12 +209,17 @@ async def call_limits_status():
         return False, []
 
 
-async def call_limits_status_full():
-    """GET /limits/status. Returns (success, full dict with limits, spending, alerts)."""
+async def call_limits_status_full(year: int = None, month: int = None):
+    """GET /limits/status. Optional year, month for that month's status. Returns (success, full dict)."""
     url = f"{API_URL}/limits/status"
+    params = {}
+    if year is not None:
+        params["year"] = year
+    if month is not None:
+        params["month"] = month
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(url, params=params or None, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status == 200:
                     return True, await resp.json()
                 return False, None
@@ -177,6 +243,25 @@ def format_limit_alerts(alerts: list) -> str:
         else:
             lines.append(f"  🟡 {cat}: ${spent:.2f} / ${limit:.2f} ({pct}%) — near limit")
     return "\n".join(lines)
+
+
+def get_advisor_tip_after_add(alerts: list, limits_list: list, spending: dict) -> str:
+    """One-line financial-advisor-style tip after adding an expense (guardrails: data-only)."""
+    if not limits_list:
+        return ""
+    over = [a for a in (alerts or []) if a.get("alert_type") == "over"]
+    near = [a for a in (alerts or []) if a.get("alert_type") != "over"]
+    total_spent = spending.get("total", 0)
+    total_limit = next((float(l["amount"]) for l in limits_list if l.get("category") == "total"), None)
+    if over:
+        return "\n💡 Tip: You're over budget in at least one category. Consider cutting non-essentials or adjusting limits in the app for next month."
+    if near:
+        return "\n💡 Tip: You're close to a limit. Keep an eye on spending this week to stay on track."
+    if total_limit and total_spent < total_limit * 0.5:
+        return "\n💡 Tip: You're under half your total budget — good progress. Keep tracking to build the habit."
+    if total_limit and total_spent <= total_limit:
+        return "\n💡 Tip: You're within your total budget. Small daily choices help; keep logging to see patterns."
+    return ""
 
 
 def detect_afford_intent(text: str) -> bool:
@@ -223,7 +308,7 @@ def parse_afford_query(text: str):
 
 
 def format_afford_reply(amount: float, category: str, status: dict) -> str:
-    """Build reply for 'can I spend X?' using limits and current spending."""
+    """Build reply for 'can I spend X?' with limits check and financial-advisor-style suggestion."""
     spending = status.get("spending", {})
     limits = {lim["category"]: float(lim["amount"]) for lim in status.get("limits", [])}
     if not limits:
@@ -233,20 +318,25 @@ def format_afford_reply(amount: float, category: str, status: dict) -> str:
             f"Set limits in the app (Limits & Alerts tab) to get a proper check."
         )
     lines = []
-    # Check total
     total_spent = spending.get("total", 0)
     total_limit = limits.get("total")
+    over_total = False
+    near_total = False
+    over_cat = False
+    near_cat = False
+
     if total_limit is not None:
         after = total_spent + amount
         pct = (after / total_limit) * 100 if total_limit else 0
         if after > total_limit:
             over = after - total_limit
             lines.append(f"⚠️ Total: Adding ${amount:.2f} would put you at ${after:.2f} (over by ${over:.2f} of ${total_limit:.2f} limit).")
+            over_total = True
         elif pct >= 80:
             lines.append(f"🟡 Total: You'd be at ${after:.2f} / ${total_limit:.2f} ({pct:.0f}%) — close to your limit.")
+            near_total = True
         else:
             lines.append(f"✅ Total: ${after:.2f} / ${total_limit:.2f} ({pct:.0f}%) — within limit.")
-    # Check category if we have one and a limit for it
     if category and category in limits:
         cat_spent = spending.get(category, 0)
         cat_limit = limits[category]
@@ -255,12 +345,25 @@ def format_afford_reply(amount: float, category: str, status: dict) -> str:
         if after_cat > cat_limit:
             over = after_cat - cat_limit
             lines.append(f"⚠️ {category}: Over by ${over:.2f} (${after_cat:.2f} / ${cat_limit:.2f}).")
+            over_cat = True
         elif pct_cat >= 80:
             lines.append(f"🟡 {category}: ${after_cat:.2f} / ${cat_limit:.2f} ({pct_cat:.0f}%) — getting close.")
+            near_cat = True
         else:
             lines.append(f"✅ {category}: ${after_cat:.2f} / ${cat_limit:.2f} — ok.")
     if not lines:
         lines.append(f"This month you've spent ${total_spent:.2f}. No limit would be exceeded by ${amount:.2f}.")
+
+    # Financial-advisor-style recommendation (guardrails: only suggest based on data)
+    if over_total or over_cat:
+        lines.append("")
+        lines.append("💡 Suggestion: This would put you over your budget. Consider a cheaper option, skipping, or moving spend from another category. Small cuts add up.")
+    elif near_total or near_cat:
+        lines.append("")
+        lines.append("💡 Suggestion: You're close to your limit. If you go ahead, try to trim spending elsewhere this month to stay on track.")
+    else:
+        lines.append("")
+        lines.append("💡 Suggestion: You're within budget. If you're saving for a goal, consider putting any leftover at month-end into savings.")
     return "\n".join(lines)
 
 
@@ -312,8 +415,8 @@ def parse_report_intent(text: str) -> tuple:
     return None, None
 
 
-def format_report(data: dict) -> str:
-    """Turn monthly-summary response into a short message."""
+def format_report(data: dict, status: dict = None) -> str:
+    """Turn monthly-summary response into a short message. Optional status adds advisor note."""
     year = data.get("year", "")
     month = data.get("month", "")
     total_expenses = data.get("total_expenses", 0)
@@ -338,6 +441,23 @@ def format_report(data: dict) -> str:
         lines.append("")
         lines.append("AI summary:")
         lines.append(summary[:800] + ("..." if len(summary) > 800 else ""))
+    # Financial-advisor-style note from limits (guardrails: data-only)
+    if status and status.get("limits"):
+        spending = status.get("spending", {})
+        limits = {lim["category"]: float(lim["amount"]) for lim in status.get("limits", [])}
+        total_limit = limits.get("total")
+        total_spent = spending.get("total", 0)
+        if total_limit is not None and total_spent > 0:
+            pct = (total_spent / total_limit) * 100
+            if pct > 100:
+                lines.append("")
+                lines.append("💡 Advisor note: That month you were over your total budget. Consider setting a higher limit or trimming spending next time.")
+            elif pct >= 80:
+                lines.append("")
+                lines.append("💡 Advisor note: You were close to your total budget that month. Small cuts in top categories can free up room.")
+            else:
+                lines.append("")
+                lines.append("💡 Advisor note: You stayed within your total budget — good discipline. Keep tracking to spot trends.")
     return "\n".join(lines)
 
 
@@ -358,7 +478,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "  e.g. report, summary, report February, report feb 2025\n\n"
         "💰 *Can I afford?* – check before you spend\n"
         "  e.g. can I go for lunch that might take 50 dollars?\n\n"
-        "Backend must be running; Ollama needed for adding expenses and AI summary."
+        "I'll give you short, data-based suggestions to stay on budget. "
+        "Backend must be running; Ollama needed for adding expenses and AI summary.\n\n"
+        "_" + DISCLAIMER + "_"
     )
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -370,6 +492,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply with current date and time."""
     await update.message.reply_text(f"🕐 {_now_str()}")
+
+
+async def cmd_disclaimer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply with scope and disclaimer (guardrails)."""
+    await update.message.reply_text(
+        "I only help with *expense tracking* and *budget limits*.\n\n_" + DISCLAIMER + "_",
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -400,9 +530,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"📷 Extracted text ({len(text)} chars). Adding expense…")
         ok, msg = await call_add_expense(text)
         if ok:
-            ok_status, alerts = await call_limits_status()
-            if ok_status and alerts:
-                msg += format_limit_alerts(alerts)
+            ok_status, status = await call_limits_status_full()
+            if ok_status and status:
+                alerts = status.get("alerts", [])
+                if alerts:
+                    msg += format_limit_alerts(alerts)
+                tip = get_advisor_tip_after_add(alerts, status.get("limits", []), status.get("spending", {}))
+                if tip:
+                    msg += tip
         await update.message.reply_text(msg)
     except Exception as e:
         logger.exception("handle_photo: %s", e)
@@ -410,11 +545,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle text: report request or add expense. Always reply back."""
+    """Handle text: report request or add expense. Always reply back. Guardrails: deflect out-of-scope."""
     try:
         text = (update.message.text or "").strip()
         if not text:
             await update.message.reply_text("Send text (expense or 'report' / 'summary'), or a photo of a receipt.")
+            return
+
+        # Guardrails: deflect investment, tax, legal, crypto, etc.
+        if detect_out_of_scope(text):
+            await update.message.reply_text(get_guardrail_reply(), parse_mode=ParseMode.MARKDOWN)
+            return
+
+        # Greetings / small talk: reply locally, don't call add-expense API
+        if detect_greeting_or_small_talk(text):
+            await update.message.reply_text(get_greeting_reply(), parse_mode=ParseMode.MARKDOWN)
             return
 
         # Report / summary intent
@@ -423,7 +568,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_chat_action("typing")
             ok, result = await call_monthly_summary(year, month)
             if ok:
-                msg = format_report(result)
+                _, status = await call_limits_status_full(year, month)
+                msg = format_report(result, status=status if status else None)
                 await update.message.reply_text(msg)
             else:
                 await update.message.reply_text(f"Report failed: {result}")
@@ -452,9 +598,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_chat_action("typing")
         ok, msg = await call_add_expense(text)
         if ok:
-            ok_status, alerts = await call_limits_status()
-            if ok_status and alerts:
-                msg += format_limit_alerts(alerts)
+            ok_status, status = await call_limits_status_full()
+            if ok_status and status:
+                alerts = status.get("alerts", [])
+                if alerts:
+                    msg += format_limit_alerts(alerts)
+                tip = get_advisor_tip_after_add(alerts, status.get("limits", []), status.get("spending", {}))
+                if tip:
+                    msg += tip
         await update.message.reply_text(msg)
     except Exception as e:
         logger.exception("handle_message: %s", e)
@@ -477,6 +628,7 @@ def main() -> None:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("date", cmd_date))
     app.add_handler(CommandHandler("time", cmd_date))
+    app.add_handler(CommandHandler("disclaimer", cmd_disclaimer))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
