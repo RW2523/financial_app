@@ -15,6 +15,8 @@ A voice-enabled expense tracking application with local LLM processing. Add expe
 | **SQLite storage** | All expenses stored in `database/expenses.db`. |
 | **Monthly summary** | AI-generated insights for a chosen month. |
 | **BI Dashboard** | Interactive Plotly charts (time series, by category, monthly). |
+| **Expense limits & alerts** | Set monthly limits; get alerts when near (80%+) or over limit (web + Telegram). |
+| **Gmail sync** | Filter Gmail (receipts, payments); sync matching emails and add as expenses via LLM (one-time OAuth). |
 | **Power BI / Tableau** | Download CSV or Excel; embed a Power BI “Publish to web” report in the app. |
 | **Public access** | Expose backend and frontend via Cloudflare tunnels (optional). |
 
@@ -173,6 +175,42 @@ To expose the app over the internet (e.g. for mobile or sharing):
 
 - **Monthly Summary:** Choose year and month, click **Generate Summary**. The app returns AI-generated insights and the list of expenses for that month (requires Ollama).
 
+### Limits & Alerts
+
+- Open the **Limits & Alerts** tab. Set a **category** (e.g. `food`, `transport`, or `total` for overall) and an **amount** (monthly limit in USD). Save.
+- When your spending for the month reaches **80%** of a limit, you get a **near limit** alert (warning). When it reaches **100%**, you get an **over limit** alert (error).
+- Alerts appear at the top of the app when you're near or over, and in the Limits tab. If you add an expense via **Telegram**, the bot replies with any limit alerts after the "Added" message.
+
+### Gmail sync (end-to-end)
+
+Use a **Gmail filter** to pull in receipts/payment emails and add them as expenses automatically.
+
+1. **Google Cloud setup (one-time)**  
+   - Go to [Google Cloud Console](https://console.cloud.google.com/).  
+   - Create a project (or use existing) → **APIs & Services** → **Enable "Gmail API"**.  
+   - **Credentials** → **Create credentials** → **OAuth 2.0 Client ID**.  
+   - Application type: **Desktop app**.  
+   - Download the JSON and save it as **`backend/credentials.json`** (or set `GMAIL_CREDENTIALS_JSON` to its path).
+
+2. **One-time OAuth (get token)**  
+   From the project root:
+   ```bash
+   pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+   python backend/gmail_auth.py
+   ```
+   A browser opens; log in with the Gmail account you want to sync. The script saves **`backend/token.json`**. Do not commit `credentials.json` or `token.json`.
+
+3. **Sync in the app**  
+   - Open the **Gmail Sync** tab.  
+   - Use the default **Gmail search query** (e.g. last 7 days, from paypal/amazon/uber, or subject contains receipt/payment/order), or edit it to match your senders.  
+   - Click **Sync Gmail**. The backend fetches matching emails, runs each through the same LLM extraction, saves new expenses, and marks messages as processed so they are not added again.
+
+4. **Filter query examples**  
+   - `newer_than:7d from:paypal.com`  
+   - `newer_than:30d (subject:receipt OR subject:payment OR subject:order)`  
+   - `from:amazon.com OR from:uber.com OR from:doordash.com`  
+   Combine as needed; same syntax as Gmail search.
+
 ### BI Dashboard and Power BI
 
 - **BI Dashboard** tab:
@@ -192,6 +230,8 @@ To expose the app over the internet (e.g. for mobile or sharing):
 | POST | `/add-audio-expense` | Form: `file` (audio). Transcribes, extracts, saves; returns saved record. |
 | POST | `/monthly-summary` | Body: `{"year": 2025, "month": 6}`. Returns AI summary and expenses for that month. |
 | GET | `/expenses` | Returns all expenses (list of objects). |
+| GET | `/gmail/status` | Returns whether Gmail is configured (credentials + token). |
+| POST | `/gmail/sync` | Body: `{"query": "Gmail search query", "max_results": 30}`. Fetches matching emails, extracts expense per message (LLM), saves and marks processed. Returns `{ "added": N, "errors": [...] }`. |
 
 ---
 
@@ -201,6 +241,8 @@ To expose the app over the internet (e.g. for mobile or sharing):
 |----------|---------|-------------|
 | `EXPENSE_API_URL` | Frontend (Streamlit), Telegram bot | Backend base URL (e.g. `http://127.0.0.1:8000`). Default in app: `http://127.0.0.1:8000`. |
 | `TELEGRAM_BOT_TOKEN` | `telegram_bot.py` | Token from @BotFather. Required to run the bot. |
+| `GMAIL_CREDENTIALS_JSON` | `backend/gmail_service.py` | Path to OAuth client JSON (default: `backend/credentials.json`). |
+| `GMAIL_TOKEN_JSON` | `backend/gmail_service.py` | Path to saved token (default: `backend/token.json`). |
 
 ---
 
@@ -215,9 +257,11 @@ financial_app/
 │   ├── llm_service.py       # Ollama (extract + monthly summary)
 │   ├── audio_service.py     # Whisper transcription
 │   ├── models.py            # Pydantic request/response models
-│   └── seed_data.py         # Sample data loader (Boston student)
+│   ├── seed_data.py         # Sample data loader (Boston student)
+│   ├── gmail_service.py     # Gmail API: fetch by query, extract expense (LLM), save
+│   └── gmail_auth.py        # One-time OAuth script → token.json
 ├── frontend/
-│   └── app.py               # Streamlit UI (tabs: Add, View, Monthly, BI Dashboard)
+│   └── app.py               # Streamlit UI (tabs: Add, View, Monthly, BI Dashboard, Limits, Gmail Sync)
 ├── database/
 │   └── expenses.db          # Created at runtime (gitignored)
 ├── telegram_bot.py          # Telegram bot (forwards messages to API)
