@@ -1,0 +1,11 @@
+# Dark mode: Blue & Black (trust, security, sophistication)
+[theme]
+base = "dark"
+primaryColor = "#2563eb"
+backgroundColor = "#0a0a0f"
+secondaryBackgroundColor = "#1a1a24"
+textColor = "#f1f5f9"
+font = "sans serif"
+
+[server]
+headless = true

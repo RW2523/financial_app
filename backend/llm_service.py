@@ -1,5 +1,6 @@
 import json
 import requests
+from datetime import datetime
 from typing import Dict, Optional
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
@@ -7,8 +8,10 @@ MODEL_NAME = "llama3.1"
 
 EXTRACTION_PROMPT = """You are an expense extraction assistant. Extract structured data from the user's expense description.
 
+Today's date is {today_iso}. Use this when the user says "today", "yesterday", or does not specify a date.
+
 Extract:
-- date: in YYYY-MM-DD format (if not specified, use today's date)
+- date: in YYYY-MM-DD format. If the user says "today" or no date, use {today_iso}. If "yesterday", use the day before. If they give a specific date (e.g. 03/11/2026 or March 11 2026), use that in YYYY-MM-DD.
 - category: one of [food, transport, shopping, entertainment, utilities, healthcare, other]
 - amount: numeric value only
 - currency: ISO code (USD, EUR, INR, etc.) - default to USD if not mentioned
@@ -51,9 +54,26 @@ def call_ollama(prompt: str, temperature: float = 0.3) -> str:
         raise Exception(f"Ollama API error: {str(e)}")
 
 
+def _fix_extracted_date(date_str: str) -> str:
+    """If the LLM returned an old/wrong year, use today's date instead."""
+    today = datetime.now().date()
+    try:
+        extracted = datetime.strptime(date_str.strip()[:10], "%Y-%m-%d").date()
+        # If extracted date is before current year, treat as wrong and use today
+        if extracted.year < today.year:
+            return today.isoformat()
+        # If extracted is more than 1 year in the future, use today
+        if extracted.year > today.year + 1:
+            return today.isoformat()
+        return date_str.strip()[:10]
+    except Exception:
+        return today.isoformat()
+
+
 def extract_expense_data(text: str) -> Dict:
     """Extract structured expense data from natural language"""
-    prompt = EXTRACTION_PROMPT.format(text=text)
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    prompt = EXTRACTION_PROMPT.format(text=text, today_iso=today_iso)
     response = call_ollama(prompt, temperature=0.1)
 
     # Try to parse JSON from response
@@ -72,6 +92,9 @@ def extract_expense_data(text: str) -> Dict:
         required = ["date", "category", "amount", "currency"]
         if not all(k in data for k in required):
             raise ValueError("Missing required fields in extracted data")
+
+        # Fix wrong date: LLM often returns past years (e.g. 2023) when it has no current date
+        data["date"] = _fix_extracted_date(data["date"])
 
         return data
 

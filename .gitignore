@@ -23,3 +23,9 @@ database/*.db
 # OS
 .DS_Store
 Thumbs.db
+
+# Gmail OAuth (never commit)
+credentials.json
+token.json
+**/credentials.json
+**/token.json
