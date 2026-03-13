@@ -1,0 +1,43 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+
+# Node / React
+frontend-react/node_modules/
+frontend-react/dist/
+frontend-react/.env
+frontend-react/.env.local
+frontend-react/npm-debug.log*
+
+# Streamlit (optional, not used in Docker build)
+frontend/.streamlit/
+
+# Data and secrets (mount at runtime)
+database/*.db
+*.db
+.env
+.env.*
+!.env.example
+
+# Git and IDE
+.git/
+.gitignore
+.cursor/
+.vscode/
+*.md
+!README.md
+
+# Tests (not needed in image)
+tests/
+pytest.ini
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docs and misc
+*.log
+.DS_Store

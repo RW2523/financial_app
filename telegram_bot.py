@@ -132,10 +132,12 @@ def run_ocr(image_path: str, lang: list = None) -> str:
         return ""
 
 
-async def call_add_expense(text: str):
-    """POST text to backend /add-text-expense. Returns (success, message)."""
+async def call_add_expense(text: str, source_type: str = None):
+    """POST text to backend /add-text-expense. source_type: telegram_text, telegram_photo, or None (default)."""
     url = f"{API_URL}/add-text-expense"
     payload = {"text": text}
+    if source_type:
+        payload["source_type"] = source_type
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=90)) as resp:
@@ -528,7 +530,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text("Could not read enough text from the image. Try a clearer photo or add the expense in text.")
             return
         await update.message.reply_text(f"📷 Extracted text ({len(text)} chars). Adding expense…")
-        ok, msg = await call_add_expense(text)
+        ok, msg = await call_add_expense(text, source_type="telegram_photo")
         if ok:
             ok_status, status = await call_limits_status_full()
             if ok_status and status:
@@ -596,7 +598,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Add expense from text
         await update.message.reply_chat_action("typing")
-        ok, msg = await call_add_expense(text)
+        ok, msg = await call_add_expense(text, source_type="telegram_text")
         if ok:
             ok_status, status = await call_limits_status_full()
             if ok_status and status:

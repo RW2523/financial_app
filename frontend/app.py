@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import json
 from datetime import datetime
 from audio_recorder_streamlit import audio_recorder
 import plotly.express as px
@@ -214,8 +215,8 @@ except Exception:
     _alerts = []
 
 # Tabs for different functions
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "➕ Add", "📊 View", "📈 Summary", "📉 Dashboard", "🔔 Limits", "📧 Gmail"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
+    "➕ Add", "📊 View", "📈 Summary", "📉 Dashboard", "🔔 Limits", "📧 Gmail", "✏️ Review Queue", "🔄 Recurring", "📋 Insights", "🤖 Ask AI", "🎯 Goals", "💳 Affordability", "🔮 Simulator"
 ])
 
 if _alerts:
@@ -253,6 +254,8 @@ with tab1:
                             if response.status_code == 200:
                                 data = response.json()
                                 st.success("✅ Expense added successfully!")
+                                if data.get("is_verified") == 0 or (data.get("confidence_score") or 0) < 0.6:
+                                    st.warning("⚠️ This expense was saved with **low confidence** and needs review. Check **Review Queue** to verify or correct.")
                                 st.json(data)
                                 st.rerun()
                             else:
@@ -285,6 +288,8 @@ with tab1:
                             if response.status_code == 200:
                                 data = response.json()
                                 st.success("✅ Expense added from voice!")
+                                if data.get("is_verified") == 0 or (data.get("confidence_score") or 0) < 0.6:
+                                    st.warning("⚠️ This expense was saved with **low confidence** and needs review. Check **Review Queue** to verify or correct.")
                                 st.json(data)
                                 st.rerun()
                             else:
@@ -432,6 +437,13 @@ with tab4:
             if df_range.empty:
                 st.warning("No expenses in the selected date range.")
             else:
+                # Budget Health (when API available)
+                try:
+                    r_h = requests.get(f"{get_api_url()}/insights/health-score", timeout=3)
+                    if r_h.status_code == 200:
+                        st.metric("Budget Health", f"{r_h.json().get('score', 0):.0f} / 100", "Insights tab for details")
+                except Exception:
+                    pass
                 # KPIs
                 total = df_range["amount"].sum()
                 count = len(df_range)
@@ -676,6 +688,41 @@ with tab5:
                             st.error(f"**{a['category']}**: ${a['spent']:.2f} / ${a['limit']:.2f} ({a['percent']}%) — over limit")
                         else:
                             st.warning(f"**{a['category']}**: ${a['spent']:.2f} / ${a['limit']:.2f} ({a['percent']}%) — near limit")
+
+            st.divider()
+            st.subheader("Forecast & predictive alerts")
+            try:
+                r_fc = requests.get(f"{get_api_url()}/forecast/month", params={"year": status.get("year"), "month": status.get("month")}, timeout=5)
+                r_pred = requests.get(f"{get_api_url()}/alerts/predictive", params={"year": status.get("year"), "month": status.get("month")}, timeout=5)
+                if r_fc.status_code == 200 and r_pred.status_code == 200:
+                    fc = r_fc.json()
+                    pred = r_pred.json()
+                    proj_total = fc.get("projected_total", 0)
+                    days_elapsed = fc.get("days_elapsed", 0)
+                    days_in_month = fc.get("days_in_month", 30)
+                    st.metric("Projected month-end total", f"${proj_total:,.2f}", f"Based on {days_elapsed}/{days_in_month} days")
+                    if fc.get("by_category"):
+                        st.caption("Projected by category")
+                        df_fc = pd.DataFrame([{"Category": k, "Projected": f"${v:,.2f}"} for k, v in fc["by_category"].items()])
+                        st.dataframe(df_fc, use_container_width=True, hide_index=True)
+                    for a in pred.get("alerts", []):
+                        st.warning(a.get("message", ""))
+                    if not pred.get("alerts") and limits_list:
+                        st.caption("No predictive over-limit alerts this month.")
+                    r_fc_cat = requests.get(f"{get_api_url()}/forecast/categories", params={"year": status.get("year"), "month": status.get("month")}, timeout=5)
+                    if r_fc_cat.status_code == 200:
+                        fc_cat = r_fc_cat.json()
+                        if fc_cat:
+                            with st.expander("Category forecast (forecast/categories API)"):
+                                if isinstance(fc_cat, dict):
+                                    df_fcc = pd.DataFrame([{"Category": k, "Projected": f"${v:,.2f}"} for k, v in fc_cat.items()])
+                                else:
+                                    df_fcc = pd.DataFrame(fc_cat)
+                                st.dataframe(df_fcc, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Forecast unavailable.")
+            except Exception:
+                st.caption("Forecast unavailable.")
     except Exception as e:
         st.error(f"Connection error: {e}")
 
@@ -739,6 +786,563 @@ with tab6:
     except Exception as e:
         st.error(f"Connection error: {e}")
 
+# TAB 7: Review Queue (low-confidence correction workflow)
+with tab7:
+    st.header("✏️ Review Queue")
+    st.caption("Expenses that need verification (low confidence or not yet verified). Edit and verify or reject.")
+
+    try:
+        response = requests.get(f"{get_api_url()}/expenses/review", timeout=10)
+        if response.status_code != 200:
+            st.error("Failed to fetch review queue")
+        else:
+            items = response.json()
+            if not items:
+                st.info("No expenses in the review queue. All expenses are verified or confidence is high.")
+            else:
+                st.metric("Needs review", len(items))
+                for ex in items:
+                    eid = ex.get("id")
+                    with st.expander(f"ID {eid} — {ex.get('date', '')} · {ex.get('category', '')} · {ex.get('amount')} {ex.get('currency', 'USD')}", expanded=True):
+                        st.caption("Raw text")
+                        st.text(ex.get("raw_text") or "")
+                        c_score = ex.get("confidence_score")
+                        st.caption(f"Confidence: {c_score if c_score is not None else 'N/A'}")
+                        if ex.get("extracted_json"):
+                            try:
+                                st.json(json.loads(ex["extracted_json"]) if isinstance(ex["extracted_json"], str) else ex["extracted_json"])
+                            except Exception:
+                                st.text(ex.get("extracted_json"))
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            new_date = st.text_input("Date", value=ex.get("date") or "", key=f"rev_date_{eid}")
+                            new_category = st.text_input("Category", value=ex.get("category") or "", key=f"rev_cat_{eid}")
+                            new_subcategory = st.text_input("Subcategory", value=ex.get("subcategory") or "", key=f"rev_sub_{eid}")
+                        with col_b:
+                            new_amount = st.number_input("Amount", value=float(ex.get("amount") or 0), min_value=0.0, step=0.01, key=f"rev_amt_{eid}")
+                            new_currency = st.text_input("Currency", value=ex.get("currency") or "USD", key=f"rev_cur_{eid}")
+                            new_merchant = st.text_input("Merchant", value=ex.get("merchant") or "", key=f"rev_merchant_{eid}")
+                        btn_col1, btn_col2, _ = st.columns([1, 1, 2])
+                        with btn_col1:
+                            if st.button("✓ Verify / Update", type="primary", key=f"verify_{eid}"):
+                                payload = {
+                                    "date": new_date,
+                                    "category": new_category,
+                                    "subcategory": new_subcategory if new_subcategory else None,
+                                    "amount": new_amount,
+                                    "currency": new_currency,
+                                    "merchant": new_merchant.strip() if new_merchant else None,
+                                }
+                                r = requests.post(f"{get_api_url()}/expenses/{eid}/verify", json=payload, timeout=5)
+                                if r.status_code == 200:
+                                    st.success("Verified")
+                                    st.rerun()
+                                else:
+                                    st.error(r.text or str(r.status_code))
+                        with btn_col2:
+                            if st.button("🗑 Reject (delete)", key=f"reject_{eid}"):
+                                r = requests.delete(f"{get_api_url()}/expenses/{eid}", timeout=5)
+                                if r.status_code == 200:
+                                    st.success("Removed")
+                                    st.rerun()
+                                else:
+                                    st.error(r.text or str(r.status_code))
+    except Exception as e:
+        st.error(f"Connection error: {e}")
+
+# TAB 8: Recurring Expenses
+with tab8:
+    st.header("🔄 Recurring Expenses")
+    st.caption("Detected subscriptions, rent, utilities, and other repeating bills. Recompute to refresh from your expense history.")
+
+    try:
+        if st.button("🔄 Recompute recurring", type="primary"):
+            with st.spinner("Scanning expenses for patterns…"):
+                r = requests.post(f"{get_api_url()}/insights/recurring/recompute", timeout=60)
+                if r.status_code == 200:
+                    data = r.json()
+                    st.success(f"Found **{data.get('count', 0)}** recurring pattern(s).")
+                    st.rerun()
+                else:
+                    st.error(r.text or str(r.status_code))
+
+        response = requests.get(f"{get_api_url()}/insights/recurring", timeout=10)
+        if response.status_code != 200:
+            st.error("Failed to load recurring insights.")
+        else:
+            items = response.json()
+            if not items:
+                st.info("No recurring expenses detected yet. Add more expenses and click **Recompute recurring** to detect subscriptions, rent, utilities, etc.")
+            else:
+                st.metric("Recurring items", len(items))
+                df = pd.DataFrame([{
+                    "Merchant": (x.get("merchant") or x.get("category") or "—"),
+                    "Category": x.get("category", "—"),
+                    "Amount": f"{x.get('currency', 'USD')} {float(x.get('typical_amount', 0)):.2f}",
+                    "Frequency": x.get("frequency_type", "—"),
+                    "Confidence": f"{float(x.get('confidence_score') or 0):.0%}",
+                    "Next expected": x.get("next_expected_date") or "—",
+                    "Count": x.get("expense_count", 0),
+                } for x in items])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.error(f"Connection error: {e}")
+
+# TAB 9: Advanced Insights
+with tab9:
+    st.header("📋 Insights")
+    st.caption("Structured behavioral insights from your expense history. Choose date range and view KPIs, trends, and anomalies.")
+
+    try:
+        from datetime import datetime, timedelta
+        end_default = datetime.now()
+        start_default = end_default - timedelta(days=30)
+        col_d1, col_d2, col_d3 = st.columns([1, 1, 2])
+        with col_d1:
+            start_date = st.date_input("Start date", value=start_default.date(), key="ins_start")
+        with col_d2:
+            end_date = st.date_input("End date", value=end_default.date(), key="ins_end")
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        params = f"start_date={start_str}&end_date={end_str}"
+
+        # Budget Health score
+        try:
+            r_health = requests.get(f"{get_api_url()}/insights/health-score", timeout=5)
+            if r_health.status_code == 200:
+                health = r_health.json()
+                score = health.get("score", 0)
+                st.subheader("Budget Health")
+                st.metric("Health score", f"{score:.0f} / 100", "Based on adherence, overspend frequency, volatility, recurring burden, discretionary ratio, anomalies")
+                with st.expander("Score breakdown"):
+                    st.json(health.get("metrics") or {})
+            else:
+                st.caption("Health score unavailable.")
+        except Exception:
+            st.caption("Health score unavailable.")
+
+        st.divider()
+        # Overview
+        r_overview = requests.get(f"{get_api_url()}/insights/overview?{params}", timeout=10)
+        if r_overview.status_code != 200:
+            st.error("Failed to load overview.")
+        else:
+            ov = r_overview.json()
+            st.subheader("KPI cards")
+            k1, k2, k3, k4, k5 = st.columns(5)
+            with k1:
+                st.metric("Total spend", f"${ov.get('total_spend', 0):,.2f}")
+            with k2:
+                st.metric("Transactions", ov.get("transaction_count", 0))
+            with k3:
+                st.metric("Avg transaction", f"${ov.get('average_transaction_amount', 0):,.2f}")
+            with k4:
+                delta = ov.get("spend_delta")
+                delta_p = ov.get("spend_delta_percent")
+                if delta is not None and delta_p is not None:
+                    st.metric("Vs previous period", f"{delta_p:+.1f}%", delta=f"${delta:+,.2f}")
+                else:
+                    st.metric("Vs previous period", "—", "No prior period")
+            with k5:
+                burden = ov.get("recurring_burden_percent")
+                st.metric("Recurring burden", f"{burden}%" if burden is not None else "—", "of spend")
+
+            st.divider()
+            st.subheader("Category breakdown")
+            if ov.get("category_breakdown"):
+                df_cat = pd.DataFrame(ov["category_breakdown"])
+                st.dataframe(df_cat, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No category data for this period.")
+            r_ins_cat = requests.get(f"{get_api_url()}/insights/categories", params={"start_date": start_str, "end_date": end_str}, timeout=10)
+            if r_ins_cat.status_code == 200:
+                ins_cat = r_ins_cat.json()
+                if ins_cat:
+                    with st.expander("Category breakdown (insights/categories API)"):
+                        if isinstance(ins_cat, list):
+                            st.dataframe(pd.DataFrame(ins_cat), use_container_width=True, hide_index=True)
+                        elif isinstance(ins_cat, dict):
+                            st.json(ins_cat)
+                        else:
+                            st.write(ins_cat)
+
+            if ov.get("biggest_category_increase"):
+                b = ov["biggest_category_increase"]
+                st.info(f"**Biggest category increase:** {b.get('category', '')} — ${b.get('delta', 0):+,.2f} ({b.get('delta_percent', 0):+.1f}%)")
+
+            st.subheader("Weekday vs weekend")
+            ww = ov.get("weekday_vs_weekend") or {}
+            st.write(f"Weekday total: **${ww.get('weekday_total', 0):,.2f}** · Weekend total: **${ww.get('weekend_total', 0):,.2f}**")
+
+            if ov.get("highest_spending_day"):
+                h = ov["highest_spending_day"]
+                st.caption(f"Highest spending day: **{h.get('date')}** — ${h.get('total', 0):,.2f}")
+
+            st.subheader("Top merchants")
+            if ov.get("top_merchants"):
+                st.dataframe(pd.DataFrame(ov["top_merchants"]), use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader("Trends (last 6 months)")
+        r_trends = requests.get(f"{get_api_url()}/insights/trends?months=6", timeout=10)
+        if r_trends.status_code == 200:
+            tr = r_trends.json()
+            if tr.get("trends"):
+                df_t = pd.DataFrame([{"Month": t["label"], "Total": t["total_spend"], "Count": t["transaction_count"]} for t in tr["trends"]])
+                st.dataframe(df_t, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No trend data.")
+        else:
+            st.caption("Could not load trends.")
+
+        st.divider()
+        st.subheader("Month forecast")
+        try:
+            r_fc = requests.get(f"{get_api_url()}/forecast/month", timeout=5)
+            r_pred = requests.get(f"{get_api_url()}/alerts/predictive", timeout=5)
+            if r_fc.status_code == 200:
+                fc = r_fc.json()
+                proj = fc.get("projected_total", 0)
+                so_far = fc.get("spend_so_far_total", 0)
+                de, dm = fc.get("days_elapsed", 0), fc.get("days_in_month", 30)
+                st.metric("Projected month-end total", f"${proj:,.2f}", f"Spend so far: ${so_far:,.2f} ({de}/{dm} days)")
+                if r_pred.status_code == 200:
+                    pred = r_pred.json()
+                    for a in pred.get("alerts", []):
+                        st.warning(a.get("message", ""))
+            else:
+                st.caption("Forecast unavailable.")
+        except Exception:
+            st.caption("Forecast unavailable.")
+
+        st.divider()
+        st.subheader("Recommendations")
+        try:
+            r_rec = requests.get(f"{get_api_url()}/insights/recommendations", timeout=5)
+            if r_rec.status_code == 200:
+                data = r_rec.json()
+                recs = data.get("recommendations", [])
+                if recs:
+                    for r in recs:
+                        with st.container():
+                            st.markdown(f"**{r.get('title', '')}**")
+                            st.caption(f"Metric: {r.get('metric_cited', '')} = {r.get('value')}")
+                            st.write(r.get("suggestion", ""))
+                            st.divider()
+                else:
+                    st.caption("No recommendations right now. Keep up the good work!")
+            else:
+                st.caption("Recommendations unavailable.")
+        except Exception:
+            st.caption("Recommendations unavailable.")
+
+        st.divider()
+        st.subheader("Anomalous expenses")
+        r_anom = requests.get(f"{get_api_url()}/insights/anomalies?{params}", timeout=10)
+        if r_anom.status_code == 200:
+            an = r_anom.json()
+            if an.get("anomalies"):
+                df_a = pd.DataFrame(an["anomalies"])
+                st.dataframe(df_a, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No anomalies detected for this period.")
+        else:
+            st.caption("Could not load anomalies.")
+
+        st.divider()
+        st.subheader("AI narrative (optional)")
+        if st.button("Generate AI narrative from insights", key="ins_narrative"):
+            with st.spinner("Generating narrative with Ollama…"):
+                r_nar = requests.get(f"{get_api_url()}/insights/narrative?{params}", timeout=60)
+                if r_nar.status_code == 200:
+                    data = r_nar.json()
+                    st.markdown("### Summary")
+                    st.write(data.get("narrative", ""))
+                else:
+                    st.error(r_nar.text or "Failed")
+    except Exception as e:
+        st.error(f"Connection error: {e}")
+
+# TAB 10: Ask AI (natural language query)
+with tab10:
+    st.header("🤖 Ask AI")
+    st.caption("Ask questions about your expense history in plain language. Answers are based only on your recorded data.")
+
+    question = st.text_input(
+        "Your question",
+        placeholder="e.g. How much did I spend on coffee last month? Show Uber expenses above 20 dollars. Which month had the highest grocery spend?",
+        key="ask_ai_question",
+        label_visibility="collapsed",
+    )
+    if st.button("Ask", type="primary", key="ask_ai_btn") and question:
+        with st.spinner("Querying…"):
+            try:
+                r = requests.post(f"{get_api_url()}/ask", json={"question": question.strip()}, timeout=30)
+                if r.status_code != 200:
+                    st.error(r.text or f"Error {r.status_code}")
+                else:
+                    data = r.json()
+                    if data.get("refused"):
+                        st.warning(data.get("answer_text", "Request refused."))
+                    else:
+                        st.markdown("### Answer")
+                        st.markdown(data.get("answer_text", ""))
+                    with st.expander("Parsed filters (transparency)"):
+                        st.json(data.get("parsed_query") or {})
+                    if data.get("rows"):
+                        st.subheader("Supporting data")
+                        df = pd.DataFrame(data["rows"])
+                        display_cols = [c for c in ["date", "category", "amount", "currency", "merchant", "raw_text"] if c in df.columns]
+                        st.dataframe(df[display_cols] if display_cols else df, use_container_width=True, hide_index=True)
+                    elif not data.get("refused") and not data.get("rows"):
+                        st.caption("No matching transactions.")
+            except Exception as e:
+                st.error(f"Connection error: {e}")
+    else:
+        st.caption("Examples: _How much did I spend on coffee last month?_ · _Show Uber expenses above $20_ · _Which month had the highest grocery spend?_")
+
+# TAB 11: Goals
+with tab11:
+    st.header("🎯 Financial Goals")
+    st.caption("Define savings targets, spending reductions, or category caps. Track progress and suggested pace.")
+
+    try:
+        status_filter = st.selectbox("Status", ["active", "completed", "all"], key="goals_status")
+        r = requests.get(f"{get_api_url()}/goals", params={"status": status_filter}, timeout=10)
+        if r.status_code != 200:
+            st.error(r.text or f"Error {r.status_code}")
+        else:
+            goals = r.json() if isinstance(r.json(), list) else []
+            if goals:
+                for g in goals:
+                    gid = g.get("id")
+                    with st.expander(f"{g.get('description') or g.get('goal_type', 'Goal')} — {g.get('goal_type', '')} (${g.get('current_amount', 0):,.2f} / ${g.get('target_amount', 0):,.2f})"):
+                        dist = g.get("distance") or {}
+                        if dist:
+                            st.caption(f"Distance: {dist}")
+                        if g.get("suggested_reduction_per_month") is not None:
+                            st.caption(f"Suggested per month: ${g['suggested_reduction_per_month']:,.2f} · per week: ${g.get('suggested_reduction_per_week') or 0:,.2f}")
+                        col_edit, col_del, _ = st.columns([1, 1, 4])
+                        with col_edit:
+                            if st.button("Edit", key=f"edit_goal_{gid}"):
+                                st.session_state["editing_goal"] = g
+                                st.rerun()
+                        with col_del:
+                            if st.button("Delete", key=f"del_goal_{gid}"):
+                                try:
+                                    dr = requests.delete(f"{get_api_url()}/goals/{gid}", timeout=10)
+                                    if dr.status_code in (200, 204):
+                                        st.success("Goal deleted.")
+                                    else:
+                                        st.error(dr.text or f"Error {dr.status_code}")
+                                except Exception as ex:
+                                    st.error(str(ex))
+                                st.rerun()
+                        with st.expander("Raw goal JSON"):
+                            st.json(g)
+            else:
+                st.info("No goals yet. Create one below.")
+    except Exception as e:
+        st.error(f"Connection error: {e}")
+
+    if st.session_state.get("editing_goal"):
+        eg = st.session_state["editing_goal"]
+        eg_id = eg.get("id")
+        st.subheader("Edit goal")
+        with st.form("edit_goal_form"):
+            gt_choices = ["savings_target", "spending_reduction", "category_cap"]
+            gt_index = gt_choices.index(eg["goal_type"]) if eg.get("goal_type") in gt_choices else 0
+            edit_goal_type = st.selectbox("Goal type", gt_choices, index=gt_index, key="edit_goal_type")
+            edit_target = st.number_input("Target amount", min_value=0.0, value=float(eg.get("target_amount", 0)), step=50.0, key="edit_goal_target")
+            edit_current = st.number_input("Current amount", min_value=0.0, value=float(eg.get("current_amount", 0)), step=50.0, key="edit_goal_current")
+            try:
+                edit_date_val = datetime.strptime(eg["target_date"][:10], "%Y-%m-%d").date() if eg.get("target_date") else None
+            except Exception:
+                edit_date_val = None
+            edit_date = st.date_input("Target date (optional)", value=edit_date_val, key="edit_goal_date")
+            edit_category = st.text_input("Category (optional)", value=eg.get("category") or "", key="edit_goal_cat")
+            edit_description = st.text_input("Description", value=eg.get("description") or "", key="edit_goal_desc")
+            edit_status = st.selectbox("Status", ["active", "completed"], index=0 if (eg.get("status") or "active") == "active" else 1, key="edit_goal_status")
+            col1, col2 = st.columns(2)
+            with col1:
+                submit_edit = st.form_submit_button("Save changes")
+            with col2:
+                cancel_edit = st.form_submit_button("Cancel")
+        if submit_edit and eg_id is not None:
+            try:
+                payload = {
+                    "goal_type": edit_goal_type,
+                    "target_amount": float(edit_target),
+                    "current_amount": float(edit_current),
+                    "target_date": (edit_date.isoformat() if edit_date else None),
+                    "category": edit_category.strip() or None,
+                    "description": edit_description.strip() or None,
+                    "status": edit_status,
+                }
+                r_put = requests.put(f"{get_api_url()}/goals/{eg_id}", json=payload, timeout=10)
+                if r_put.status_code == 200:
+                    st.success("Goal updated.")
+                    del st.session_state["editing_goal"]
+                    st.rerun()
+                else:
+                    st.error(r_put.text or f"Error {r_put.status_code}")
+            except Exception as e:
+                st.error(str(e))
+        if cancel_edit:
+            del st.session_state["editing_goal"]
+            st.rerun()
+        st.divider()
+
+    st.subheader("Create goal")
+    with st.form("create_goal_form"):
+        goal_type = st.selectbox("Goal type", ["savings_target", "spending_reduction", "category_cap"], key="goal_type")
+        target_amount = st.number_input("Target amount", min_value=0.0, value=1000.0, step=50.0, key="goal_target")
+        current_amount = st.number_input("Current amount", min_value=0.0, value=0.0, step=50.0, key="goal_current")
+        target_date = st.date_input("Target date (optional)", value=None, key="goal_date")
+        category = st.text_input("Category (optional, for spending_reduction / category_cap)", value="", key="goal_cat")
+        description = st.text_input("Description", value="", key="goal_desc")
+        submitted = st.form_submit_button("Create goal")
+        if submitted:
+            try:
+                payload = {
+                    "goal_type": goal_type,
+                    "target_amount": float(target_amount),
+                    "current_amount": float(current_amount),
+                    "target_date": target_date.isoformat() if target_date else None,
+                    "category": category.strip() or None,
+                    "description": description.strip() or None,
+                }
+                r = requests.post(f"{get_api_url()}/goals", json=payload, timeout=10)
+                if r.status_code == 200:
+                    st.success("Goal created.")
+                    st.rerun()
+                else:
+                    st.error(r.text or f"Error {r.status_code}")
+            except Exception as e:
+                st.error(str(e))
+
+# TAB 12: Affordability Check
+with tab12:
+    st.header("💳 Can I Afford This?")
+    st.caption("Check whether a purchase fits your budget, limits, projected spend, and goals.")
+
+    amount = st.number_input("Amount", min_value=0.0, value=50.0, step=1.0, key="aff_amount")
+    category = st.text_input("Category", value="food", placeholder="e.g. food, transport", key="aff_cat")
+    merchant = st.text_input("Merchant (optional)", value="", placeholder="e.g. Starbucks", key="aff_merchant")
+    if st.button("Check affordability", type="primary", key="aff_btn"):
+        try:
+            payload = {"amount": float(amount), "category": category.strip() or None, "merchant": merchant.strip() or None}
+            r = requests.post(f"{get_api_url()}/affordability/check", json=payload, timeout=10)
+            if r.status_code != 200:
+                st.error(r.text or f"Error {r.status_code}")
+            else:
+                data = r.json()
+                if data.get("can_afford"):
+                    st.success("✅ Yes — you can afford this purchase.")
+                else:
+                    st.error("❌ This purchase would exceed your limits or conflict with goals.")
+                st.markdown("**Recommendation:** " + (data.get("recommendation_text") or ""))
+                for reason in data.get("reasons", []):
+                    st.caption(f"• {reason}")
+                if data.get("projected_impact"):
+                    with st.expander("Projected impact"):
+                        st.json(data["projected_impact"])
+                if data.get("budget_impact"):
+                    with st.expander("Budget impact"):
+                        st.json(data["budget_impact"])
+                if data.get("goal_impact"):
+                    with st.expander("Goal impact"):
+                        st.json(data["goal_impact"])
+        except Exception as e:
+            st.error(f"Connection error: {e}")
+
+# TAB 13: Simulator
+with tab13:
+    st.header("🔮 Scenario Simulator")
+    st.caption("Test hypothetical changes without affecting real data. See how adjustments would impact projected spending, limits, and goals.")
+
+    adjustments = []
+    with st.expander("Adjustments", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.checkbox("Reduce category spend by %", key="sim_reduce_pct"):
+                rcat = st.text_input("Category", value="transport", key="sim_rcat")
+                rval = st.slider("Percent to reduce", 0, 100, 20, key="sim_rpct")
+                adjustments.append({"type": "reduce_category_percent", "category": rcat.strip() or "other", "value": float(rval)})
+            if st.checkbox("Remove recurring subscription", key="sim_remove_rec"):
+                rmerchant = st.text_input("Merchant name", value="", placeholder="e.g. Netflix", key="sim_rmerchant")
+                if rmerchant.strip():
+                    adjustments.append({"type": "remove_recurring_merchant", "merchant": rmerchant.strip()})
+            if st.checkbox("Add one-time expense", key="sim_add_one"):
+                acat = st.text_input("Category", value="travel", key="sim_acat")
+                aamt = st.number_input("Amount", min_value=0.0, value=300.0, key="sim_aamt")
+                adjustments.append({"type": "add_one_time_expense", "category": (acat or "other").strip(), "amount": float(aamt)})
+        with c2:
+            if st.checkbox("Change category cap", key="sim_cap"):
+                cap_cat = st.text_input("Category", value="food", key="sim_cap_cat")
+                cap_amt = st.number_input("New monthly cap", min_value=0.0, value=400.0, key="sim_cap_amt")
+                adjustments.append({"type": "change_category_cap", "category": (cap_cat or "other").strip(), "amount": float(cap_amt)})
+            if st.checkbox("Save fixed amount per week", key="sim_save"):
+                save_val = st.number_input("Amount per week", min_value=0.0, value=50.0, key="sim_save_val")
+                adjustments.append({"type": "save_fixed_per_week", "value": float(save_val)})
+
+    if st.button("Run simulation", type="primary", key="sim_run"):
+        if not adjustments:
+            st.warning("Add at least one adjustment above, then run again.")
+        else:
+            try:
+                r = requests.post(
+                    f"{get_api_url()}/simulate",
+                    json={"adjustments": adjustments},
+                    timeout=15,
+                )
+                if r.status_code != 200:
+                    st.error(r.text or f"Error {r.status_code}")
+                else:
+                    data = r.json()
+                    base = data.get("baseline_summary") or {}
+                    sim = data.get("simulated_summary") or {}
+                    delta = data.get("delta_summary") or {}
+
+                    st.subheader("Comparison")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Baseline projected", f"${base.get('projected_total', 0):,.2f}", "current month")
+                    with col2:
+                        st.metric("Simulated projected", f"${sim.get('projected_total', 0):,.2f}", "after adjustments")
+                    with col3:
+                        chg = delta.get("total_change", 0)
+                        st.metric("Delta", f"${chg:,.2f}", "savings" if chg < 0 else "increase")
+
+                    st.subheader("Before vs after by category")
+                    by_cat_base = {k: v for k, v in (base.get("by_category") or {}).items() if k != "total"}
+                    by_cat_sim = {k: v for k, v in (sim.get("by_category") or {}).items() if k != "total"}
+                    if by_cat_base or by_cat_sim:
+                        cats = sorted(set(by_cat_base.keys()) | set(by_cat_sim.keys()))
+                        if cats:
+                            fig = go.Figure()
+                            fig.add_trace(go.Bar(name="Baseline", x=cats, y=[by_cat_base.get(c, 0) for c in cats], marker_color="#3b82f6"))
+                            fig.add_trace(go.Bar(name="Simulated", x=cats, y=[by_cat_sim.get(c, 0) for c in cats], marker_color="#22c55e"))
+                            fig.update_layout(barmode="group", xaxis_title="Category", yaxis_title="Amount", margin=dict(t=20), height=320)
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.caption("No category breakdown (add expenses or limits for categories).")
+
+                    if data.get("projected_limit_changes"):
+                        with st.expander("Limit impact"):
+                            for lim in data["projected_limit_changes"]:
+                                over_b = lim.get("baseline_over") or 0
+                                over_s = lim.get("simulated_over") or 0
+                                st.caption(f"**{lim.get('category', '')}** — Baseline over: ${over_b:,.2f} → Simulated over: ${over_s:,.2f}")
+                            st.json(data["projected_limit_changes"])
+                    if data.get("goal_impact"):
+                        with st.expander("Goal impact"):
+                            for g in data["goal_impact"]:
+                                st.caption(f"**{g.get('description', '')}** — Simulated spend: ${g.get('simulated_projected_spend', 0):,.2f}; improves: {g.get('improves', 'N/A')}")
+                            st.json(data["goal_impact"])
+            except Exception as e:
+                st.error(f"Connection error: {e}")
+
 # Sidebar
 with st.sidebar:
     st.header("Settings")
@@ -766,6 +1370,30 @@ with st.sidebar:
             st.error("API Error")
     except Exception:
         st.error("Not connected")
+
+    with st.expander("API endpoints check"):
+        st.caption("Hit key backend routes to verify connectivity.")
+        base = get_api_url()
+        endpoints = [
+            ("GET", "/"),
+            ("GET", "/expenses"),
+            ("GET", "/limits"),
+            ("GET", "/limits/status"),
+            ("GET", "/forecast/month"),
+            ("GET", "/forecast/categories"),
+            ("GET", "/insights/overview"),
+            ("GET", "/insights/categories"),
+            ("GET", "/insights/health-score"),
+            ("GET", "/goals"),
+            ("GET", "/gmail/status"),
+        ]
+        for method, path in endpoints:
+            try:
+                r = requests.get(f"{base}{path}", timeout=3) if method == "GET" else None
+                ok = r is not None and r.status_code == 200
+                st.write(f"{'✅' if ok else '❌'} {method} {path}")
+            except Exception:
+                st.write(f"❌ {method} {path}")
 
     st.markdown("---")
     st.subheader("About")

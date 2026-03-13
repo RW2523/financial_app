@@ -1,9 +1,10 @@
 """
 Gmail sync: fetch emails matching a filter query, extract expense from each (subject + body),
-save via LLM, and mark as processed so we don't add duplicates.
+save via hybrid extraction, and mark as processed so we don't add duplicates.
 Requires: credentials.json (OAuth client) and token.json (from one-time gmail_auth.py).
 """
 import base64
+import json
 import os
 import re
 
@@ -116,14 +117,33 @@ def sync_gmail(query: str, max_results: int = 50):
             if len(text.strip()) < 10:
                 database.gmail_mark_processed(mid)
                 continue
-            extracted = llm_service.extract_expense_data(text)
+            import extraction_service
+            import merchant_service
+            from config import is_auto_verified
+            result = extraction_service.extract_expense(text, source_type="gmail")
+            is_verified = 1 if is_auto_verified(result.confidence_score) else 0
             database.save_expense(
-                date=extracted["date"],
-                category=extracted["category"],
-                amount=extracted["amount"],
-                currency=extracted["currency"],
+                date=result.date,
+                category=result.category,
+                amount=result.amount,
+                currency=result.currency,
                 raw_text=f"[Gmail] {text[:200]}...",
+                merchant=result.merchant,
+                subcategory=result.subcategory,
+                source_type="gmail",
+                confidence_score=result.confidence_score,
+                is_verified=is_verified,
+                extracted_json=json.dumps(result.extracted_json) if result.extracted_json else None,
+                correction_json=None,
             )
+            if result.merchant and result.category and (result.confidence_score or 0) >= 0.6:
+                merchant_service.remember_merchant_mapping(
+                    result.merchant,
+                    result.category,
+                    subcategory=result.subcategory,
+                    display_name=result.merchant,
+                    confidence_score=result.confidence_score or 0,
+                )
             database.gmail_mark_processed(mid)
             added += 1
         except Exception as e:

@@ -1,248 +1,70 @@
 # AI Expense Tracker
 
-A voice-enabled expense tracking application with local LLM processing. Add expenses via the **web app** (text or voice), **Telegram**, or export data for **Power BI** / Tableau.
+A voice-enabled expense tracking application with local AI. Add expenses via **text or voice** in the web app, through **Telegram**, or by **syncing Gmail**. All data is stored locally (SQLite); extraction and insights use your local **Ollama** LLM.
+
+**→ How to run the application:** see **[SETUP.md](SETUP.md)** for prerequisites, installation, and run options (single script, Docker, or manual).
 
 ---
 
-## Features
-
-| Feature | Description |
-|--------|-------------|
-| **Text input** | Type an expense in plain language; LLM extracts date, category, amount, currency. |
-| **Voice input** | Record audio in the app; Whisper transcribes, then LLM extracts and saves. |
-| **Telegram bot** | Add expenses by text; send a receipt/screenshot (OCR) to add from image; ask for a "report" and get a monthly summary in the chat. |
-| **AI extraction** | Ollama (llama3.1) parses natural language into structured fields. |
-| **SQLite storage** | All expenses stored in `database/expenses.db`. |
-| **Monthly summary** | AI-generated insights for a chosen month. |
-| **BI Dashboard** | Interactive Plotly charts (time series, by category, monthly). |
-| **Expense limits & alerts** | Set monthly limits; get alerts when near (80%+) or over limit (web + Telegram). |
-| **Gmail sync** | Filter Gmail (receipts, payments); sync matching emails and add as expenses via LLM (one-time OAuth). |
-| **Power BI / Tableau** | Download CSV or Excel; embed a Power BI “Publish to web” report in the app. |
-| **Public access** | Expose backend and frontend via Cloudflare tunnels (optional). |
-
----
-
-## Prerequisites
-
-- **Python 3.10+** (3.12 recommended for compatibility with Whisper and dependencies)
-- **Ollama** installed and running ([ollama.ai](https://ollama.ai))
-- **llama3.1** model: `ollama pull llama3.1`
-- (Optional) **Telegram** account for the bot workflow
-
----
-
-## Setup (one-time)
-
-### 1. Clone or open the project
-
-```bash
-cd /path/to/financial_app
-```
-
-### 2. Create and activate virtual environment
-
-```bash
-python3 -m venv venv
-# macOS / Linux:
-source venv/bin/activate
-# Windows:
-venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-This installs FastAPI, Streamlit, Ollama/LLM-related packages, Whisper, Plotly, Telegram bot libraries, and the rest. First run may take a few minutes (e.g. PyTorch, Whisper).
-
-### 4. Install and run Ollama (if not already)
-
-```bash
-# Install from https://ollama.ai, then:
-ollama pull llama3.1
-ollama serve   # if not already running
-```
-
----
-
-## Running the application
-
-You need the **backend** running for the web app and Telegram bot to work. The **frontend** is the Streamlit UI. The **Telegram bot** is optional and only needed if you want to add expenses via Telegram.
-
-### Process 1: Start the backend (required for web and Telegram)
-
-From the **project root** (`financial_app/`):
-
-```bash
-source venv/bin/activate   # if not already
-cd backend
-uvicorn main:app --reload --port 8000
-```
-
-Or from project root without `cd`:
-
-```bash
-uvicorn backend.main:app --reload --port 8000
-```
-
-- API base URL: **http://127.0.0.1:8000**
-- Interactive docs: **http://127.0.0.1:8000/docs**
-- On startup: database is created at `database/expenses.db`; Whisper loads on first voice request.
-
-### Process 2: Start the frontend (web UI)
-
-In a **second terminal**, from project root:
-
-```bash
-source venv/bin/activate
-cd frontend
-streamlit run app.py --server.port 8501
-```
-
-- Open in browser: **http://localhost:8501**
-
-If the frontend cannot reach the backend, use the **sidebar → Backend API URL** and set it to `http://127.0.0.1:8000` (or your backend URL).
-
-### Process 3: Load sample data (optional)
-
-To pre-fill the database with sample expenses (e.g. Boston student, 2025 + Jan 2026):
-
-```bash
-source venv/bin/activate
-python backend/seed_data.py
-```
-
-Then in the app, open **View Expenses** or **BI Dashboard** and refresh.
-
-### Process 4: Run the Telegram bot (optional)
-
-Only if you want to add expenses or get reports via Telegram (backend must be running).
-
-1. **Create a bot** (one-time):
-   - In Telegram, open **@BotFather**.
-   - Send `/newbot`, follow the prompts, and copy the **token** (e.g. `7123456789:AAH...`).
-   - Do not commit or share this token.
-
-2. **Run the bot** (in a **third terminal**), from project root:
-
-   ```bash
-   source venv/bin/activate
-   export TELEGRAM_BOT_TOKEN="your_token_from_botfather"
-   export EXPENSE_API_URL="http://127.0.0.1:8000"
-   python telegram_bot.py
-   ```
-
-   - If the backend is on another host, set `EXPENSE_API_URL` to that URL (e.g. `http://192.168.1.5:8000`).
-   - **Receipt/screenshot (OCR):** Install `easyocr` so the bot can read images: `pip install easyocr`. Then send a **photo** of a receipt or screenshot; the bot extracts text, then adds the expense via the same LLM pipeline. If `easyocr` is not installed, the bot still works for text and report.
-
-3. **What you can send the bot:**
-   - **Text (expense):** e.g. `50 dollars on groceries yesterday`, `Coffee 5 euros this morning` → bot adds it and replies with the saved record.
-   - **Photo (receipt/screenshot):** Attach an image → bot runs OCR, then adds the expense from the extracted text (requires `easyocr`).
-   - **Report request:** e.g. `report`, `summary`, `report February`, `report feb 2025` → bot replies with that month’s summary (transaction count, total, top categories, AI summary).
-   - Use `/start` or `/help` in the bot for a short reminder.
-
-### Process 5: Public access (optional)
-
-To expose the app over the internet (e.g. for mobile or sharing):
-
-1. Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/).
-2. In separate terminals:
-
-   ```bash
-   cloudflared tunnel --url http://localhost:8000   # backend
-   cloudflared tunnel --url http://localhost:8501   # frontend
-   ```
-
-3. Use the generated HTTPS URLs. For Telegram, set `EXPENSE_API_URL` to the public backend URL if the bot runs on a server that can reach it.
-
----
-
-## Usage (web app)
+## Features & functionality
 
 ### Adding expenses
 
-- **Add Expense → Text:** Enter a sentence (e.g. “Spent $45 on groceries yesterday”) and click **Add Text Expense**. The LLM extracts date, category, amount, currency and saves to the DB.
-- **Add Expense → Voice:** Click record, speak the expense, stop, then **Process Audio Expense**. Whisper transcribes; then the same extraction and save.
-- **Telegram:** Send **text** (e.g. "30 dollars lunch today") or a **photo** of a receipt/screenshot (OCR + LLM add the expense). Ask **"report"** or **"report February 2025"** to get a monthly summary in the chat (backend and bot must be running).
+| Feature | What it does |
+|--------|----------------|
+| **Text input** | Type a sentence (e.g. “Spent $45 on groceries yesterday”). The AI extracts date, category, amount, and currency and saves the expense. |
+| **Voice input** | Record audio in the app. Whisper transcribes it; the same AI pipeline extracts and saves the expense. |
+| **Telegram bot** | Send a text message (e.g. “50 dollars lunch today”) or a photo of a receipt; the bot adds the expense and can reply with a monthly report. |
+| **Gmail sync** | Connect Gmail (one-time OAuth). The app fetches emails matching a search (e.g. receipts, payments), extracts expenses via the same AI, and saves them. |
 
-### Viewing expenses
+### Viewing & analyzing
 
-- **View Expenses:** Lists all expenses and shows total count, categories, and total amount. Use **Refresh Expenses** to reload.
+| Feature | What it does |
+|--------|----------------|
+| **View expenses** | List all expenses with date, category, amount, and notes. See totals and category counts. |
+| **Monthly summary** | Pick a year and month; the AI generates a written summary and lists that month’s expenses. |
+| **BI Dashboard** | Interactive charts: spending over time (area), spending by category (bar), share by category (donut), and monthly totals (bar). Set a date range, see KPIs and budget health, and **download CSV** for Power BI or Excel. |
+| **Insights** | Budget health score, KPI cards (total spend, transactions, vs previous period, recurring burden), category breakdown, 6‑month trends, forecast, recommendations, anomaly detection, and an optional AI narrative. |
+| **Recurring** | Detects recurring expenses (subscriptions, etc.) from your history. Recompute to refresh. |
 
-### Monthly summary
+### Limits & goals
 
-- **Monthly Summary:** Choose year and month, click **Generate Summary**. The app returns AI-generated insights and the list of expenses for that month (requires Ollama).
+| Feature | What it does |
+|--------|----------------|
+| **Limits & alerts** | Set monthly limits per category (or “total”). Get **near limit** (80%+) and **over limit** alerts in the app and (if enabled) in Telegram. |
+| **Forecast & predictive alerts** | See projected month-end spending and which categories are on track to exceed limits. |
+| **Goals** | Create savings targets, spending reductions, or category caps. Track progress, distance to goal, and suggested monthly/weekly pace. Edit and delete goals. |
+| **Affordability check** | Enter an amount and category (and optional merchant). The app tells you if you can afford it based on limits, projected spend, recurring burden, and goals, with reasons and impact details. |
+| **Scenario simulator** | Test “what if” changes (e.g. reduce category by %, remove a subscription, add a one-time expense, change a cap, save per week) without changing real data. Compare baseline vs simulated spending and see limit/goal impact. |
 
-### Limits & Alerts
+### Review & quality
 
-- Open the **Limits & Alerts** tab. Set a **category** (e.g. `food`, `transport`, or `total` for overall) and an **amount** (monthly limit in USD). Save.
-- When your spending for the month reaches **80%** of a limit, you get a **near limit** alert (warning). When it reaches **100%**, you get an **over limit** alert (error).
-- Alerts appear at the top of the app when you're near or over, and in the Limits tab. If you add an expense via **Telegram**, the bot replies with any limit alerts after the "Added" message.
+| Feature | What it does |
+|--------|----------------|
+| **Review queue** | Low-confidence or unverified expenses appear here. Verify or correct date, category, amount, and currency, or delete. |
+| **Ask AI** | Ask questions in natural language (e.g. “How much did I spend on food last month?”). The AI uses your expense data to answer; you can inspect parsed filters and supporting data. |
 
-### Gmail sync (end-to-end)
+### Export & integration
 
-Use a **Gmail filter** to pull in receipts/payment emails and add them as expenses automatically.
-
-1. **Google Cloud setup (one-time)**  
-   - Go to [Google Cloud Console](https://console.cloud.google.com/).  
-   - Create a project (or use existing) → **APIs & Services** → **Enable "Gmail API"**.  
-   - **Credentials** → **Create credentials** → **OAuth 2.0 Client ID**.  
-   - Application type: **Desktop app**.  
-   - Download the JSON and save it as **`backend/credentials.json`** (or set `GMAIL_CREDENTIALS_JSON` to its path).
-
-2. **One-time OAuth (get token)**  
-   From the project root:
-   ```bash
-   pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
-   python backend/gmail_auth.py
-   ```
-   A browser opens; log in with the Gmail account you want to sync. The script saves **`backend/token.json`**. Do not commit `credentials.json` or `token.json`.
-
-3. **Sync in the app**  
-   - Open the **Gmail Sync** tab.  
-   - Use the default **Gmail search query** (e.g. last 7 days, from paypal/amazon/uber, or subject contains receipt/payment/order), or edit it to match your senders.  
-   - Click **Sync Gmail**. The backend fetches matching emails, runs each through the same LLM extraction, saves new expenses, and marks messages as processed so they are not added again.
-
-4. **Filter query examples**  
-   - `newer_than:7d from:paypal.com`  
-   - `newer_than:30d (subject:receipt OR subject:payment OR subject:order)`  
-   - `from:amazon.com OR from:uber.com OR from:doordash.com`  
-   Combine as needed; same syntax as Gmail search.
-
-### BI Dashboard and Power BI
-
-- **BI Dashboard** tab:
-  - If the backend is reachable, expenses load from the API. You can set **From** / **To** dates; KPIs and charts update for that range.
-  - If the API is unreachable, you can **upload a CSV** (columns: `date`, `category`, `amount`; optional: `currency`, `raw_text`) to view the same charts.
-  - **Download CSV** / **Download Excel** for the current date range. Use these in **Power BI Desktop** or **Tableau** (Get data → Text/CSV or Excel).
-  - **Embed Power BI report:** In Power BI, publish your report to the web, copy the embed URL, and paste it in the “Power BI embed URL” field to show the report inside the app.
+| Feature | What it does |
+|--------|----------------|
+| **Download CSV** | From the BI Dashboard, export the filtered date range as CSV for Power BI, Tableau, or spreadsheets. |
+| **API** | REST API for all operations (add expense, list expenses, limits, goals, affordability, simulate, insights, Gmail sync, etc.). Interactive docs at `/docs` when the backend is running. |
 
 ---
 
-## Backend API (reference)
+## Tech stack
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Health check; returns `{"message":"Expense Tracker API","status":"running"}`. |
-| POST | `/add-text-expense` | Body: `{"text": "..."}`. Extracts and saves expense; returns saved record. |
-| POST | `/add-audio-expense` | Form: `file` (audio). Transcribes, extracts, saves; returns saved record. |
-| POST | `/monthly-summary` | Body: `{"year": 2025, "month": 6}`. Returns AI summary and expenses for that month. |
-| GET | `/expenses` | Returns all expenses (list of objects). |
-| GET | `/gmail/status` | Returns whether Gmail is configured (credentials + token). |
-| POST | `/gmail/sync` | Body: `{"query": "Gmail search query", "max_results": 30}`. Fetches matching emails, extracts expense per message (LLM), saves and marks processed. Returns `{ "added": N, "errors": [...] }`. |
+- **Backend:** FastAPI, SQLite, Ollama (LLM), Whisper (speech-to-text)
+- **Frontend:** React (Vite, TypeScript, Tailwind) or Streamlit
+- **Optional:** Telegram (python-telegram-bot), Gmail (Google APIs), EasyOCR (receipt images)
 
 ---
 
-## Environment variables
+## Documentation
 
-| Variable | Used by | Description |
-|----------|---------|-------------|
-| `EXPENSE_API_URL` | Frontend (Streamlit), Telegram bot | Backend base URL (e.g. `http://127.0.0.1:8000`). Default in app: `http://127.0.0.1:8000`. |
-| `TELEGRAM_BOT_TOKEN` | `telegram_bot.py` | Token from @BotFather. Required to run the bot. |
-| `GMAIL_CREDENTIALS_JSON` | `backend/gmail_service.py` | Path to OAuth client JSON (default: `backend/credentials.json`). |
-| `GMAIL_TOKEN_JSON` | `backend/gmail_service.py` | Path to saved token (default: `backend/token.json`). |
+- **[SETUP.md](SETUP.md)** — What you need to run the app, one-time setup, how to run (script / Docker / manual), optional Telegram/Gmail/sample data, environment variables, and troubleshooting.
+- **API docs** — When the backend is running, open **http://127.0.0.1:8000/docs** for interactive API reference.
 
 ---
 
@@ -250,49 +72,15 @@ Use a **Gmail filter** to pull in receipts/payment emails and add them as expens
 
 ```
 financial_app/
-├── backend/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI app and routes
-│   ├── database.py          # SQLite init and CRUD
-│   ├── llm_service.py       # Ollama (extract + monthly summary)
-│   ├── audio_service.py     # Whisper transcription
-│   ├── models.py            # Pydantic request/response models
-│   ├── seed_data.py         # Sample data loader (Boston student)
-│   ├── gmail_service.py     # Gmail API: fetch by query, extract expense (LLM), save
-│   └── gmail_auth.py        # One-time OAuth script → token.json
-├── frontend/
-│   └── app.py               # Streamlit UI (tabs: Add, View, Monthly, BI Dashboard, Limits, Gmail Sync)
-├── database/
-│   └── expenses.db          # Created at runtime (gitignored)
-├── telegram_bot.py          # Telegram bot (forwards messages to API)
+├── backend/           # FastAPI app, database, services (LLM, Whisper, extraction, insights, goals, etc.)
+├── frontend/          # Streamlit UI
+├── frontend-react/    # React UI (Vite, Tailwind, Recharts)
+├── tests/             # Pytest tests
+├── database/          # SQLite DB (created at runtime)
+├── telegram_bot.py    # Telegram bot
+├── run_all.sh         # Run backend + frontend (macOS/Linux)
+├── run_all.ps1        # Run backend + frontend (Windows PowerShell)
 ├── requirements.txt
-├── README.md
-└── .gitignore
+├── README.md          # This file — features & functionality
+└── SETUP.md           # Setup and run instructions
 ```
-
----
-
-## Troubleshooting
-
-| Issue | What to do |
-|-------|------------|
-| **Ollama not responding** | Run `ollama serve`. Ensure `ollama pull llama3.1` has been run. |
-| **“Could not reach API” in app** | Start the backend (Process 1). In sidebar set **Backend API URL** to `http://127.0.0.1:8000` (or your backend URL). |
-| **Port 8000 or 8501 in use** | Stop the process using that port, or use different ports: `uvicorn main:app --port 8001`, `streamlit run app.py --server.port 8502`. Update **Backend API URL** if you change the backend port. |
-| **Whisper errors** | First voice request downloads the Whisper model (~75MB for “tiny”). Use Python 3.12 if you see compatibility errors. |
-| **Telegram bot not replying** | Ensure backend is running and `EXPENSE_API_URL` is correct. Check that `TELEGRAM_BOT_TOKEN` is set and valid. |
-| **Telegram "OCR not available"** | Install: `pip install easyocr`. The bot will still add expenses from text and answer report requests. |
-| **Add expense fails (500)** | Check backend logs. Often Ollama is not running or llama3.1 is not pulled. |
-
----
-
-## Summary: order of operations
-
-1. **One-time:** Install Python 3.10+, create venv, `pip install -r requirements.txt`, install Ollama and `ollama pull llama3.1`.
-2. **Each session:** Start **backend** (Process 1), then **frontend** (Process 2). Optionally run **Telegram bot** (Process 4) and/or load **sample data** (Process 3).
-3. **Use:** Add expenses via web (text/voice) or Telegram; view in **View Expenses**; run **Monthly Summary** and **BI Dashboard**; export or embed for Power BI as needed.
-
-
-Note 
-
-8315431091:AAGV7l5siVKpx6htWSIH9AuMpvHI3aF1DL4 BOT - ID

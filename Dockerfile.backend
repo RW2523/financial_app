@@ -1,0 +1,25 @@
+# Backend API (FastAPI + Python)
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# System deps for Whisper (optional; comment out if not using voice)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend ./backend
+COPY telegram_bot.py .
+
+# Ensure database dir exists (volume mount for persistence)
+RUN mkdir -p /app/database
+
+ENV PYTHONPATH=/app
+ENV EXPENSE_DEFAULT_USER_ID=local
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
