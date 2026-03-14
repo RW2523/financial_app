@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 try:
     from telegram import Update
     from telegram.constants import ParseMode
+    from telegram.error import NetworkError, RetryAfter
     from telegram.ext import Application, ContextTypes, MessageHandler, CommandHandler, filters
 except ImportError:
     print("Install: pip install python-telegram-bot")
@@ -633,6 +634,19 @@ def main() -> None:
     app.add_handler(CommandHandler("disclaimer", cmd_disclaimer))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log network/rate-limit errors without full traceback; bot keeps running."""
+        err = context.error
+        if isinstance(err, RetryAfter):
+            logger.warning("Telegram rate limit: retry after %s s", err.retry_after)
+            return
+        if isinstance(err, NetworkError):
+            logger.warning("Telegram network error: %s (polling will retry)", err)
+            return
+        logger.exception("Telegram bot error: %s", err)
+
+    app.add_error_handler(error_handler)
 
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

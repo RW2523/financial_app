@@ -163,6 +163,24 @@ export async function ask(question: string): Promise<{ answer: string; filters_u
   return apiFetch("/ask", { method: "POST", body: JSON.stringify({ question }) });
 }
 
+// Chat (unified add + ask)
+export type ChatResponse =
+  | { type: "expense_added"; expense: { id?: number; date: string; category: string; amount: number; currency: string; raw_text?: string }; message: string }
+  | { type: "answer"; answer_text: string; question: string; refused?: boolean; rows?: unknown[]; aggregates?: unknown };
+
+export async function chat(message: string): Promise<ChatResponse> {
+  return apiFetch("/chat", { method: "POST", body: JSON.stringify({ message }) });
+}
+
+export async function chatVoice(file: Blob): Promise<ChatResponse & { transcript?: string }> {
+  const base = getBaseUrl();
+  const form = new FormData();
+  form.append("file", file, "audio.wav");
+  const res = await fetch(`${base}/chat-voice`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 // Goals
 export interface Goal {
   id: number;
@@ -239,6 +257,37 @@ export async function getGmailStatus(): Promise<{ connected?: boolean; message?:
 
 export async function syncGmail(): Promise<{ synced?: number; message?: string }> {
   return apiFetch("/gmail/sync", { method: "POST", body: JSON.stringify({}) });
+}
+
+// Clear all data (Settings)
+export async function clearAllData(): Promise<{ ok: boolean; deleted: { expenses: number; limits: number; goals: number; recurring: number; gmail_processed: number } }> {
+  return apiFetch("/admin/clear-data", { method: "POST", body: JSON.stringify({ confirm: true }) });
+}
+
+export async function addSampleData(): Promise<{ ok: boolean; expenses: number; limits: number; goals: number }> {
+  return apiFetch("/admin/seed-sample-data", { method: "POST" });
+}
+
+// Finance news (Tavily)
+export interface FinanceNewsItem {
+  title: string;
+  url: string;
+  content: string;
+  score?: number;
+}
+
+export async function getFinanceNews(params?: { query?: string; max_results?: number; time_range?: string }): Promise<{
+  results: FinanceNewsItem[];
+  query?: string;
+  response_time?: number;
+  error?: string;
+}> {
+  const search = new URLSearchParams();
+  if (params?.query) search.set("query", params.query);
+  if (params?.max_results != null) search.set("max_results", String(params.max_results));
+  if (params?.time_range) search.set("time_range", params.time_range);
+  const qs = search.toString();
+  return apiFetch(`/news/finance${qs ? `?${qs}` : ""}`);
 }
 
 // Health

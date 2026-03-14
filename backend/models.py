@@ -132,6 +132,10 @@ class AskRequest(BaseModel):
     question: str
 
 
+class ChatRequest(BaseModel):
+    message: str
+
+
 class AskResponse(BaseModel):
     question: str
     parsed_query: Dict[str, Any]
@@ -186,6 +190,10 @@ class SimulateAdjustment(BaseModel):
     value: Optional[float] = None
     amount: Optional[float] = None
     merchant: Optional[str] = None
+
+
+class ClearDataRequest(BaseModel):
+    confirm: bool = False
 
 
 class SimulateRequest(BaseModel):

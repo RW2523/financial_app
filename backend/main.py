@@ -6,7 +6,7 @@ import database
 import llm_service
 import audio_service
 import extraction_service
-from models import ExpenseInput, ExpenseResponse, MonthlyRequest, LimitSet, GmailSyncRequest, VerifyExpenseRequest, AskRequest, AskResponse, GoalCreate, GoalUpdate, AffordabilityRequest, AffordabilityResponse, SimulateRequest, SimulateResponse
+from models import ExpenseInput, ExpenseResponse, MonthlyRequest, LimitSet, GmailSyncRequest, VerifyExpenseRequest, AskRequest, AskResponse, ChatRequest, GoalCreate, GoalUpdate, AffordabilityRequest, AffordabilityResponse, ClearDataRequest, SimulateRequest, SimulateResponse
 import os
 import tempfile
 
@@ -461,6 +461,43 @@ async def ask_question(request: AskRequest):
     )
 
 
+# ---------- Unified chat (add + ask) ----------
+
+@app.post("/chat")
+async def chat_message(body: ChatRequest):
+    """
+    Single endpoint: add an expense from text or get an answer to a question.
+    If the message looks like a question (e.g. 'How much did I spend?') -> answer from data.
+    Otherwise treat as expense description and add it.
+    """
+    try:
+        import chat_service
+        return chat_service.handle_chat_message(body.message.strip(), source_type="chat", user_id=_user_id())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat-voice")
+async def chat_voice(file: UploadFile = File(...)):
+    """
+    Transcribe audio, then process as chat (add expense or answer question).
+    Returns { transcript, type, ... } with same response shape as /chat.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+            content = await file.read()
+            temp_audio.write(content)
+            temp_audio_path = temp_audio.name
+        transcript = audio_service.transcribe_audio(temp_audio_path)
+        os.unlink(temp_audio_path)
+        import chat_service
+        out = chat_service.handle_chat_message(transcript, source_type="chat_voice", user_id=_user_id())
+        out["transcript"] = transcript
+        return out
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------- Recurring insights ----------
 
 @app.get("/insights/recurring")
@@ -586,6 +623,56 @@ async def simulate_scenario(body: SimulateRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Simulation failed: {str(e)}")
+
+
+# ---------- Clear all data (Settings) ----------
+
+@app.post("/admin/clear-data")
+async def clear_all_data_endpoint(body: ClearDataRequest):
+    """
+    Delete all expenses, limits, goals, recurring, and gmail_processed for the current user.
+    Requires body: { "confirm": true }. Returns counts of deleted rows.
+    """
+    if body.confirm is not True:
+        raise HTTPException(status_code=400, detail="Send { \"confirm\": true } to clear all data.")
+    try:
+        counts = database.clear_all_data(_user_id())
+        return {"ok": True, "deleted": counts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clear data failed: {str(e)}")
+
+
+@app.post("/admin/seed-sample-data")
+async def seed_sample_data_endpoint():
+    """
+    Add sample expenses (last 4 months), limits, and goals so the app makes sense with all elements.
+    """
+    try:
+        import seed_data
+        result = seed_data.load_sample_data(user_id=_user_id())
+        return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Seed sample data failed: {str(e)}")
+
+
+# ---------- Finance news (Tavily) ----------
+
+@app.get("/news/finance")
+async def get_finance_news(query: str = None, max_results: int = 15, time_range: str = "week"):
+    """
+    Fetch finance-related news (money, exchange, stocks, economy) via Tavily.
+    Set TAVILY_API_KEY in env to enable. Optional: query, max_results (1–20), time_range (day|week|month|year).
+    """
+    try:
+        import news_service
+        result = news_service.fetch_finance_news(
+            query=query,
+            max_results=max_results,
+            time_range=time_range if time_range in ("day", "week", "month", "year") else "week",
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------- Gmail sync ----------

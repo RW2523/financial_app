@@ -87,11 +87,12 @@ source venv/bin/activate   # if not already
 - React UI → **http://localhost:5173**
 - Streamlit UI → **http://localhost:8501**
 
-**With Telegram bot:** set the token before running:
+**With Telegram bot:** set the token before running, or add it to a `.env` file (the script loads `.env` if present):
 
 ```bash
 export TELEGRAM_BOT_TOKEN=your_token_from_botfather
 ./run_all.sh
+# Or: copy .env.example to .env, add your token, then ./run_all.sh
 ```
 
 ### Option 2: Single script on Windows (PowerShell)
@@ -234,6 +235,7 @@ Then open **View** or **BI Dashboard** in the app and refresh.
 | `GMAIL_CREDENTIALS_JSON` | Backend Gmail | Path to OAuth client JSON (default: `backend/credentials.json`). |
 | `GMAIL_TOKEN_JSON` | Backend Gmail | Path to saved token (default: `backend/token.json`). |
 | `EXPENSE_DEFAULT_USER_ID` | Backend | Default user id for data (default: `local`). |
+| `TAVILY_API_KEY` | Backend (Finance News) | API key from [tavily.com](https://tavily.com). Enables the **Finance News** tab. |
 
 ---
 
@@ -248,6 +250,7 @@ Then open **View** or **BI Dashboard** in the app and refresh.
 | **Telegram bot not replying** | Ensure backend is running and `EXPENSE_API_URL` is correct. Check `TELEGRAM_BOT_TOKEN` is set and valid. |
 | **Add expense returns 500** | Check backend logs. Often Ollama is not running or `llama3.1` is not pulled. |
 | **Whisper errors (voice)** | First voice use downloads the Whisper model. Use Python 3.12 if you see compatibility errors. |
+| **Finance News shows “TAVILY_API_KEY not set”** | Add `TAVILY_API_KEY=tvly-...` to `.env` (get a key at tavily.com) and restart the backend. |
 
 ---
 

@@ -21,8 +21,15 @@ if [ -d "venv" ]; then
   source venv/bin/activate
 fi
 
+# Optional: load .env so TELEGRAM_BOT_TOKEN can be set there
+if [ -f ".env" ]; then
+  set -a
+  source .env
+  set +a
+fi
+
 BACKEND_PID=""
-BOT_PID="8315431091:AAGV7l5siVKpx6htWSIH9AuMpvHI3aF1DL4"
+BOT_PID=""
 
 cleanup() {
   echo ""
@@ -54,6 +61,14 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
   python telegram_bot.py &
   BOT_PID=$!
   sleep 1
+  if kill -0 "$BOT_PID" 2>/dev/null; then
+    echo "Telegram bot running (EXPENSE_API_URL=$EXPENSE_API_URL)"
+  else
+    echo "Telegram bot failed to start (check token and: pip install python-telegram-bot aiohttp)"
+    BOT_PID=""
+  fi
+else
+  echo "Telegram bot skipped (set TELEGRAM_BOT_TOKEN or add to .env to enable)"
 fi
 
 # 3) Frontend (foreground so Ctrl+C triggers cleanup)

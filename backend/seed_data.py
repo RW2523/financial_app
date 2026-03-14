@@ -99,6 +99,57 @@ def generate_monthly_expenses(year: int, month: int) -> list:
     return expenses
 
 
+def get_sample_expenses_for_months(months: list = None):
+    """
+    Generate sample expenses for the given (year, month) list.
+    If months is None, uses last 4 months including current.
+    Returns list of (date_str, category, amount, raw_text).
+    """
+    from datetime import datetime
+    if months is None:
+        now = datetime.now()
+        months = []
+        for i in range(4):
+            m = now.month - i
+            y = now.year
+            while m < 1:
+                m += 12
+                y -= 1
+            months.append((y, m))
+        months.reverse()
+    out = []
+    for year, month in months:
+        for date_str, category, amount, raw_text in generate_monthly_expenses(year, month):
+            out.append((date_str, category, amount, raw_text))
+    return out
+
+
+def load_sample_data(user_id: str = None) -> dict:
+    """
+    Load sample expenses (last 4 months), 4 limits, and 2 goals.
+    Returns { "expenses": N, "limits": N, "goals": N }.
+    """
+    database.init_database()
+    uid = database._resolve_user_id(user_id)
+    expenses = get_sample_expenses_for_months()
+    for date_str, category, amount, raw_text in expenses:
+        database.save_expense(date_str, category, amount, "USD", raw_text, user_id=uid)
+    # Limits that make sense with the generated spend
+    database.set_limit("total", 3500.0, "USD", user_id=uid)
+    database.set_limit("food", 600.0, "USD", user_id=uid)
+    database.set_limit("transport", 200.0, "USD", user_id=uid)
+    database.set_limit("utilities", 1200.0, "USD", user_id=uid)
+    database.create_goal(
+        "savings_target", 2000.0, 0, "2026-12-31", None,
+        "Save for emergency fund", "active", user_id=uid
+    )
+    database.create_goal(
+        "spending_reduction", 400.0, 0, "2026-06-30", "food",
+        "Reduce monthly food spend to $400", "active", user_id=uid
+    )
+    return {"expenses": len(expenses), "limits": 4, "goals": 2}
+
+
 def main():
     database.init_database()
 

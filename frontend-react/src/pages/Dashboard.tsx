@@ -233,8 +233,8 @@ export default function Dashboard() {
                 {dailyData.length > 0 && (
                   <div className="card mb-6">
                     <h3 className="font-medium text-text-primary mb-4">Spending over time</h3>
-                    <div className="h-72 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div className="w-full" style={{ minHeight: 288 }}>
+                      <ResponsiveContainer width="100%" height={288}>
                         <AreaChart data={dailyData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                           <defs>
                             <linearGradient id="fillAmount" x1="0" y1="0" x2="0" y2="1">
@@ -274,8 +274,8 @@ export default function Dashboard() {
                   {barData.length > 0 && (
                     <div className="card">
                       <h3 className="font-medium text-text-primary mb-4">Spending by category</h3>
-                      <div className="h-80 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                      <div className="w-full" style={{ minHeight: 320 }}>
+                        <ResponsiveContainer width="100%" height={320}>
                           <BarChart
                             data={barData}
                             layout="vertical"
@@ -294,8 +294,8 @@ export default function Dashboard() {
                   {pieData.length > 0 && (
                     <div className="card">
                       <h3 className="font-medium text-text-primary mb-4">Share by category</h3>
-                      <div className="h-80 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                      <div className="w-full" style={{ minHeight: 320 }}>
+                        <ResponsiveContainer width="100%" height={320}>
                           <PieChart>
                             <Pie
                               data={pieData}
@@ -328,8 +328,8 @@ export default function Dashboard() {
                 {monthlyData.length > 0 && (
                   <div className="card">
                     <h3 className="font-medium text-text-primary mb-4">Monthly total spending</h3>
-                    <div className="h-72 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div className="w-full" style={{ minHeight: 288 }}>
+                      <ResponsiveContainer width="100%" height={288}>
                         <BarChart data={monthlyData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#30363d" opacity={0.5} />
                           <XAxis

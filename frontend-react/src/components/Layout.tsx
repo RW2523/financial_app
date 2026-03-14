@@ -2,40 +2,28 @@ import { useState, useEffect } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { clsx } from "clsx";
 import {
-  PlusCircle,
-  List,
-  BarChart3,
-  LayoutDashboard,
-  Bell,
-  Mail,
-  CheckSquare,
-  RefreshCw,
-  Lightbulb,
   MessageCircle,
+  List,
+  LayoutDashboard,
+  PiggyBank,
   Target,
-  CreditCard,
-  Sparkles,
+  Newspaper,
+  Mail,
   Settings,
   Wallet,
 } from "lucide-react";
 import { getLimitsStatus } from "../api/client";
-import AlertBanner from "./AlertBanner";
+import NotificationBell from "./NotificationBell";
 
 const nav = [
-  { to: "/", label: "Add", icon: PlusCircle },
-  { to: "/view", label: "View", icon: List },
-  { to: "/summary", label: "Summary", icon: BarChart3 },
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/limits", label: "Limits", icon: Bell },
-  { to: "/gmail", label: "Gmail", icon: Mail },
-  { to: "/review", label: "Review Queue", icon: CheckSquare },
-  { to: "/recurring", label: "Recurring", icon: RefreshCw },
-  { to: "/insights", label: "Insights", icon: Lightbulb },
-  { to: "/ask", label: "Ask AI", icon: MessageCircle },
-  { to: "/goals", label: "Goals", icon: Target },
-  { to: "/affordability", label: "Affordability", icon: CreditCard },
-  { to: "/simulator", label: "Simulator", icon: Sparkles },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/", label: "Chat", icon: MessageCircle, end: true },
+  { to: "/expenses", label: "Expenses", icon: List, end: false },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, end: false },
+  { to: "/budget", label: "Budget", icon: PiggyBank, end: false },
+  { to: "/goals", label: "Goals", icon: Target, end: true },
+  { to: "/news", label: "News", icon: Newspaper, end: true },
+  { to: "/gmail", label: "Gmail", icon: Mail, end: true },
+  { to: "/settings", label: "Settings", icon: Settings, end: true },
 ];
 
 export default function Layout() {
@@ -57,11 +45,11 @@ export default function Layout() {
           </div>
         </div>
         <nav className="flex-1 overflow-y-auto p-2">
-          {nav.map(({ to, label, icon: Icon }) => (
+          {nav.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
-              end={to === "/"}
+              end={end}
               className={({ isActive }) =>
                 clsx(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
@@ -78,7 +66,9 @@ export default function Layout() {
         </nav>
       </aside>
       <div className="flex-1 flex flex-col overflow-hidden">
-        <AlertBanner alerts={alerts} />
+        <header className="flex items-center justify-end shrink-0 h-12 px-4 border-b border-border bg-surface-elevated">
+          <NotificationBell alerts={alerts} />
+        </header>
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>

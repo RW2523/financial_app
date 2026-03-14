@@ -43,3 +43,6 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # ----- API -----
 EXPENSE_API_URL = os.environ.get("EXPENSE_API_URL", "http://127.0.0.1:8000")
+
+# ----- Tavily (finance news) -----
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "").strip()

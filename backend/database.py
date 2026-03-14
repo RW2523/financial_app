@@ -1005,3 +1005,57 @@ def add_merchant_alias(merchant_id: int, alias_text: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def clear_all_data(user_id: str = None) -> dict:
+    """
+    Delete all expenses, limits, goals, and recurring data for the given user.
+    Returns counts of deleted rows: { "expenses": N, "limits": N, "goals": N, "recurring": N, "gmail_processed": N }.
+    """
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    counts = {}
+
+    def has_column(table: str, col: str) -> bool:
+        cursor.execute(f"PRAGMA table_info({table})")
+        return any(row[1] == col for row in cursor.fetchall())
+
+    # Expenses
+    if has_column("expenses", "user_id"):
+        cursor.execute("DELETE FROM expenses WHERE user_id = ? OR user_id IS NULL", (uid,))
+    else:
+        cursor.execute("DELETE FROM expenses")
+    counts["expenses"] = cursor.rowcount
+
+    # Limits
+    if has_column("expense_limits", "user_id"):
+        cursor.execute("DELETE FROM expense_limits WHERE user_id = ?", (uid,))
+    else:
+        cursor.execute("DELETE FROM expense_limits")
+    counts["limits"] = cursor.rowcount
+
+    # Goals
+    if has_column("financial_goals", "user_id"):
+        cursor.execute("DELETE FROM financial_goals WHERE user_id = ? OR user_id IS NULL", (uid,))
+    else:
+        cursor.execute("DELETE FROM financial_goals")
+    counts["goals"] = cursor.rowcount
+
+    # Recurring
+    if has_column("recurring_expenses", "user_id"):
+        cursor.execute("DELETE FROM recurring_expenses WHERE user_id = ? OR user_id IS NULL", (uid,))
+    else:
+        cursor.execute("DELETE FROM recurring_expenses")
+    counts["recurring"] = cursor.rowcount
+
+    # Gmail processed (so next sync can re-process if desired)
+    if has_column("gmail_processed", "user_id"):
+        cursor.execute("DELETE FROM gmail_processed WHERE user_id = ? OR user_id IS NULL", (uid,))
+    else:
+        cursor.execute("DELETE FROM gmail_processed")
+    counts["gmail_processed"] = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+    return counts
