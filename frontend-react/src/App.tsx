@@ -1,15 +1,18 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ApiProvider } from "./context/ApiContext";
+import { AuthProvider } from "./context/AuthContext";
 import Layout from "./components/Layout";
+import ProtectedRoute from "./components/ProtectedRoute";
 import ExpensesLayout from "./components/ExpensesLayout";
 import DashboardLayout from "./components/DashboardLayout";
 import BudgetLayout from "./components/BudgetLayout";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
 import Chat from "./pages/Chat";
 import View from "./pages/View";
 import Summary from "./pages/Summary";
 import Dashboard from "./pages/Dashboard";
 import Limits from "./pages/Limits";
-import Gmail from "./pages/Gmail";
 import Review from "./pages/Review";
 import Recurring from "./pages/Recurring";
 import Insights from "./pages/Insights";
@@ -22,9 +25,12 @@ import FinanceNews from "./pages/FinanceNews";
 function App() {
   return (
     <ApiProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout />}>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
             <Route index element={<Chat />} />
             {/* Expenses: List, Summary, Review, Recurring */}
             <Route path="expenses" element={<ExpensesLayout />}>
@@ -49,7 +55,6 @@ function App() {
             </Route>
             <Route path="goals" element={<Goals />} />
             <Route path="news" element={<FinanceNews />} />
-            <Route path="gmail" element={<Gmail />} />
             <Route path="settings" element={<Settings />} />
             {/* Redirect old URLs to new grouped URLs */}
             <Route path="view" element={<Navigate to="/expenses/list" replace />} />
@@ -63,10 +68,12 @@ function App() {
             <Route path="finance-news" element={<Navigate to="/news" replace />} />
             <Route path="ask" element={<Navigate to="/" replace />} />
             <Route path="add" element={<Navigate to="/" replace />} />
+            <Route path="gmail" element={<Navigate to="/settings" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>
+      </AuthProvider>
     </ApiProvider>
   );
 }

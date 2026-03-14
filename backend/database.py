@@ -45,8 +45,18 @@ def _ensure_expense_columns(conn):
     conn.commit()
 
 
+# Use plain types in ALTER TABLE (no UNIQUE); we add a unique index on username separately (SQLite compatibility).
+_USER_AUTH_COLUMNS = [
+    ("username", "TEXT"),
+    ("password_hash", "TEXT"),
+    ("salary", "REAL DEFAULT 0"),
+    ("monthly_budget", "REAL DEFAULT 0"),
+    ("currency", "TEXT DEFAULT 'USD'"),
+]
+
+
 def _ensure_users_and_backfill_user_id(conn):
-    """Create users table, ensure default user exists, backfill user_id on expenses."""
+    """Create users table, ensure default user exists, backfill user_id on expenses. Add auth columns if missing."""
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -56,16 +66,100 @@ def _ensure_users_and_backfill_user_id(conn):
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cursor.execute("PRAGMA table_info(users)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    for col_name, col_def in _USER_AUTH_COLUMNS:
+        if col_name not in existing_cols:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}")
+    # Unique index on username so login lookups are unique (avoids UNIQUE in ALTER which can fail on some SQLite).
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)"
+    )
     uid = DEFAULT_USER_ID
     cursor.execute(
         "INSERT OR IGNORE INTO users (id, display_name) VALUES (?, ?)",
         (uid, "Local User"),
     )
+    # Ensure demo user exists for "Default login"
+    _ensure_demo_user(cursor)
     cursor.execute("PRAGMA table_info(expenses)")
     has_user_id = any(row[1] == "user_id" for row in cursor.fetchall())
     if has_user_id:
         cursor.execute("UPDATE expenses SET user_id = ? WHERE user_id IS NULL", (uid,))
     conn.commit()
+
+
+def _ensure_demo_user(cursor):
+    """Create demo user if not present (username=demo, password=demo)."""
+    import hashlib
+    demo_id = "demo"
+    cursor.execute("SELECT 1 FROM users WHERE id = ?", (demo_id,))
+    if cursor.fetchone():
+        return
+    pw = hashlib.sha256(("expense_tracker_auth_v1" + "demo").encode()).hexdigest()
+    cursor.execute(
+        """INSERT INTO users (id, display_name, username, password_hash, salary, monthly_budget, currency)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (demo_id, "Demo User", "demo", pw, 5000.0, 3500.0, "USD"),
+    )
+
+
+def get_user_by_username(username: str) -> Optional[Dict]:
+    """Return user row by username (case-insensitive) or None."""
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username or "",))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: str) -> Optional[Dict]:
+    """Return user row by id or None."""
+    if not user_id:
+        return None
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_expense_count_for_user(user_id: str) -> int:
+    """Return number of expenses for the given user."""
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(expenses)")
+    if not any(row[1] == "user_id" for row in cursor.fetchall()):
+        conn.close()
+        return 0
+    cursor.execute("SELECT COUNT(*) FROM expenses WHERE user_id = ?", (user_id,))
+    n = cursor.fetchone()[0]
+    conn.close()
+    return n
+
+
+def create_user(
+    user_id: str,
+    username: str,
+    password_hash: str,
+    salary: float = 0,
+    monthly_budget: float = 0,
+    currency: str = "USD",
+) -> None:
+    """Insert new user. Raises if username already exists."""
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO users (id, display_name, username, password_hash, salary, monthly_budget, currency)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, username, username, password_hash, salary, monthly_budget, currency or "USD"),
+    )
+    conn.commit()
+    conn.close()
 
 
 def _migrate_expense_limits_to_user_scoped(conn):

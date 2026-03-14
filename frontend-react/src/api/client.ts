@@ -5,6 +5,19 @@ const getBaseUrl = () => {
   return String(url).replace(/\/$/, "");
 };
 
+let _apiUserId: string | null = null;
+
+export function setApiUserId(userId: string | null) {
+  _apiUserId = userId;
+}
+
+/** Headers to add to API requests (e.g. X-User-Id). Use for fetch() calls that don't go through apiFetch. */
+export function getApiHeaders(): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (_apiUserId) h["X-User-Id"] = _apiUserId;
+  return h;
+}
+
 export function apiUrl(): string {
   return getBaseUrl();
 }
@@ -20,9 +33,11 @@ export async function apiFetch<T>(
     Object.entries(params).forEach(([k, v]) => search.set(k, String(v)));
     url += `?${search.toString()}`;
   }
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...(init.headers as Record<string, string>) };
+  if (_apiUserId) headers["X-User-Id"] = _apiUserId;
   const res = await fetch(url, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init.headers },
+    headers,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -58,7 +73,7 @@ export async function addAudioExpense(file: Blob): Promise<Expense> {
   const base = getBaseUrl();
   const form = new FormData();
   form.append("file", file, "audio.wav");
-  const res = await fetch(`${base}/add-audio-expense`, { method: "POST", body: form });
+  const res = await fetch(`${base}/add-audio-expense`, { method: "POST", body: form, headers: getApiHeaders() });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -176,7 +191,7 @@ export async function chatVoice(file: Blob): Promise<ChatResponse & { transcript
   const base = getBaseUrl();
   const form = new FormData();
   form.append("file", file, "audio.wav");
-  const res = await fetch(`${base}/chat-voice`, { method: "POST", body: form });
+  const res = await fetch(`${base}/chat-voice`, { method: "POST", body: form, headers: getApiHeaders() });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -251,12 +266,19 @@ export async function simulate(adjustments: SimulateAdjustment[]): Promise<{
 }
 
 // Gmail
-export async function getGmailStatus(): Promise<{ connected?: boolean; message?: string }> {
+export async function getGmailStatus(): Promise<{
+  connected?: boolean;
+  configured?: boolean;
+  message?: string;
+  credentials_path?: string;
+  token_path?: string;
+  error?: string;
+}> {
   return apiFetch("/gmail/status");
 }
 
-export async function syncGmail(): Promise<{ synced?: number; message?: string }> {
-  return apiFetch("/gmail/sync", { method: "POST", body: JSON.stringify({}) });
+export async function syncGmail(body?: { query?: string; max_results?: number }): Promise<{ added?: number; errors?: string[] }> {
+  return apiFetch("/gmail/sync", { method: "POST", body: JSON.stringify(body ?? {}) });
 }
 
 // Clear all data (Settings)
@@ -288,6 +310,39 @@ export async function getFinanceNews(params?: { query?: string; max_results?: nu
   if (params?.time_range) search.set("time_range", params.time_range);
   const qs = search.toString();
   return apiFetch(`/news/finance${qs ? `?${qs}` : ""}`);
+}
+
+// Auth
+export interface AuthUser {
+  user_id: string;
+  username: string;
+  salary: number;
+  monthly_budget: number;
+  currency: string;
+  display_name?: string;
+}
+
+export async function authLogin(username: string, password: string): Promise<AuthUser> {
+  return apiFetch("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+}
+
+export async function authRegister(params: {
+  username: string;
+  password: string;
+  salary?: number;
+  monthly_budget?: number;
+  currency?: string;
+}): Promise<AuthUser> {
+  return apiFetch("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      username: params.username,
+      password: params.password,
+      salary: params.salary ?? 0,
+      monthly_budget: params.monthly_budget ?? 0,
+      currency: params.currency ?? "USD",
+    }),
+  });
 }
 
 // Health

@@ -1,21 +1,41 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from datetime import datetime
 import json
 import database
 import llm_service
 import audio_service
 import extraction_service
-from models import ExpenseInput, ExpenseResponse, MonthlyRequest, LimitSet, GmailSyncRequest, VerifyExpenseRequest, AskRequest, AskResponse, ChatRequest, GoalCreate, GoalUpdate, AffordabilityRequest, AffordabilityResponse, ClearDataRequest, SimulateRequest, SimulateResponse
+from models import (
+    ExpenseInput, ExpenseResponse, MonthlyRequest, LimitSet, GmailSyncRequest,
+    VerifyExpenseRequest, AskRequest, AskResponse, ChatRequest,
+    AuthRegisterRequest, AuthLoginRequest, AuthUserResponse,
+    GoalCreate, GoalUpdate, AffordabilityRequest, AffordabilityResponse,
+    ClearDataRequest, SimulateRequest, SimulateResponse,
+)
 import os
 import tempfile
 
 from config import CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, is_auto_verified, NEAR_LIMIT_PERCENT, DEFAULT_USER_ID
+import context as request_context
 
 
 def _user_id() -> str:
-    """Current user id (single-user mode: always default). Replace with auth context for multi-user."""
-    return DEFAULT_USER_ID
+    """Current user id from request (X-User-Id header) or default."""
+    return request_context.get_current_user_id()
+
+
+class UserIdMiddleware(BaseHTTPMiddleware):
+    """Set request user id from X-User-Id header for all API calls."""
+    async def dispatch(self, request: Request, call_next):
+        user_id = request.headers.get("X-User-Id", "").strip() or None
+        request_context.set_current_user_id(user_id)
+        try:
+            return await call_next(request)
+        finally:
+            request_context.set_current_user_id(None)
+
 
 app = FastAPI(title="Expense Tracker API")
 
@@ -27,6 +47,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(UserIdMiddleware)
 
 
 @app.on_event("startup")
@@ -40,6 +61,65 @@ async def startup_event():
 @app.get("/")
 async def root():
     return {"message": "Expense Tracker API", "status": "running"}
+
+
+# ---------- Auth (login / register) ----------
+
+@app.get("/auth/status")
+async def auth_status():
+    """Health check for auth module. Returns 200 if this API has auth routes (e.g. for login page)."""
+    return {"auth": True}
+
+
+@app.post("/auth/register", response_model=AuthUserResponse)
+async def auth_register(body: AuthRegisterRequest):
+    """Register a new user with username, password, and optional salary/budget."""
+    try:
+        import auth_service
+        user = auth_service.register(
+            username=body.username,
+            password=body.password,
+            salary=body.salary,
+            monthly_budget=body.monthly_budget,
+            currency=body.currency or "USD",
+        )
+        return AuthUserResponse(
+            user_id=user["id"],
+            username=user.get("username", body.username),
+            salary=float(user.get("salary") or 0),
+            monthly_budget=float(user.get("monthly_budget") or 0),
+            currency=user.get("currency") or "USD",
+            display_name=user.get("display_name"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/auth/login", response_model=AuthUserResponse)
+async def auth_login(body: AuthLoginRequest):
+    """Login with username and password. Returns user profile (no token; send X-User-Id with user_id on subsequent requests)."""
+    import auth_service
+    import seed_data
+    user = auth_service.login(username=body.username.strip(), password=body.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    user_id = user["id"]
+    # For demo user: ensure they have sample data so "Default login" gives a full experience
+    if user_id == "demo":
+        try:
+            count = database.get_expense_count_for_user(user_id)
+            if count == 0:
+                seed_data.load_sample_data(user_id=user_id)
+        except Exception:
+            pass
+    return AuthUserResponse(
+        user_id=user_id,
+        username=user.get("username", ""),
+        salary=float(user.get("salary") or 0),
+        monthly_budget=float(user.get("monthly_budget") or 0),
+        currency=user.get("currency") or "USD",
+        display_name=user.get("display_name"),
+    )
 
 
 @app.post("/add-text-expense", response_model=ExpenseResponse)
@@ -684,13 +764,22 @@ async def gmail_status():
         import gmail_service as gs
         has_creds = os.path.exists(gs.CREDENTIALS_PATH)
         has_token = os.path.exists(gs.TOKEN_PATH)
+        connected = has_creds and has_token
+        if connected:
+            message = "Ready to sync. Click Sync Gmail to fetch emails."
+        elif not has_creds:
+            message = f"Credentials not found. Add OAuth client JSON at: {gs.CREDENTIALS_PATH}"
+        else:
+            message = f"Token not found. Run once: python backend/gmail_auth.py (saves to {gs.TOKEN_PATH})"
         return {
-            "configured": has_creds and has_token,
+            "connected": connected,
+            "configured": connected,
+            "message": message,
             "credentials_path": gs.CREDENTIALS_PATH,
             "token_path": gs.TOKEN_PATH,
         }
     except Exception as e:
-        return {"configured": False, "error": str(e)}
+        return {"connected": False, "configured": False, "message": str(e), "error": str(e)}
 
 
 @app.post("/gmail/sync")

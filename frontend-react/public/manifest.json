@@ -1,0 +1,13 @@
+{
+  "name": "SelavAI - Personal Financial Assistant",
+  "short_name": "SelavAI",
+  "description": "Personal Financial Assistant",
+  "icons": [
+    { "src": "/icon.png", "type": "image/png", "sizes": "any", "purpose": "any" },
+    { "src": "/icon.png", "type": "image/png", "sizes": "any", "purpose": "maskable" }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a"
+}

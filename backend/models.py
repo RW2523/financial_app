@@ -136,6 +136,28 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class AuthRegisterRequest(BaseModel):
+    username: str
+    password: str
+    salary: float = 0
+    monthly_budget: float = 0
+    currency: str = "USD"
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthUserResponse(BaseModel):
+    user_id: str
+    username: str
+    salary: float = 0
+    monthly_budget: float = 0
+    currency: str = "USD"
+    display_name: Optional[str] = None
+
+
 class AskResponse(BaseModel):
     question: str
     parsed_query: Dict[str, Any]

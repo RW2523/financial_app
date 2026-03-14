@@ -8,11 +8,10 @@ import {
   PiggyBank,
   Target,
   Newspaper,
-  Mail,
   Settings,
-  Wallet,
 } from "lucide-react";
 import { getLimitsStatus } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import NotificationBell from "./NotificationBell";
 
 const nav = [
@@ -22,11 +21,11 @@ const nav = [
   { to: "/budget", label: "Budget", icon: PiggyBank, end: false },
   { to: "/goals", label: "Goals", icon: Target, end: true },
   { to: "/news", label: "News", icon: Newspaper, end: true },
-  { to: "/gmail", label: "Gmail", icon: Mail, end: true },
   { to: "/settings", label: "Settings", icon: Settings, end: true },
 ];
 
 export default function Layout() {
+  const { user } = useAuth();
   const [alerts, setAlerts] = useState<{ category: string; limit: number; spent: number; percent: number; alert_type: string }[]>([]);
 
   useEffect(() => {
@@ -40,8 +39,8 @@ export default function Layout() {
       <aside className="w-56 shrink-0 border-r border-border bg-surface-elevated flex flex-col">
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-2">
-            <Wallet className="h-8 w-8 text-accent" />
-            <span className="font-semibold text-text-primary">Expense Tracker</span>
+            <img src="/icon.png" alt="" className="h-8 w-8 rounded-lg shrink-0" />
+            <span className="font-semibold text-text-primary">SelavAI</span>
           </div>
         </div>
         <nav className="flex-1 overflow-y-auto p-2">
@@ -66,7 +65,12 @@ export default function Layout() {
         </nav>
       </aside>
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex items-center justify-end shrink-0 h-12 px-4 border-b border-border bg-surface-elevated">
+        <header className="flex items-center justify-end gap-3 shrink-0 h-12 px-4 border-b border-border bg-surface-elevated">
+          {user && (
+            <span className="text-sm text-text-secondary" title={`Salary: ${user.currency} ${user.salary}; Budget: ${user.currency} ${user.monthly_budget}`}>
+              {user.username}
+            </span>
+          )}
           <NotificationBell alerts={alerts} />
         </header>
         <main className="flex-1 overflow-auto">
