@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from datetime import datetime
@@ -222,6 +222,79 @@ async def add_audio_expense(file: UploadFile = File(...)):
         return _row_to_response(database.get_expense(expense_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/add-document-expenses")
+async def add_document_expenses(
+    files: list[UploadFile] = File(...),
+    message: str | None = Form(None),
+):
+    """
+    Add expenses from uploaded PDFs and/or images (receipts, invoices).
+    Uses OCR for images and text extraction for PDFs; LLM extracts all expense lines.
+    """
+    import document_service
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one file (PDF or image) is required.")
+    combined_text_parts = []
+    for up in files:
+        ct = up.content_type or ""
+        fn = up.filename or ""
+        suffix = ".pdf" if ("pdf" in ct or fn.lower().endswith(".pdf")) else ".img"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            content = await up.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            text = document_service.get_text_from_file(tmp_path, ct, fn)
+            if text:
+                combined_text_parts.append(f"--- {fn}\n{text}")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    combined_text = "\n\n".join(combined_text_parts) if combined_text_parts else ""
+    if not combined_text.strip():
+        return {
+            "added": 0,
+            "expenses": [],
+            "message": "No text could be extracted from the files. For images install easyocr; for PDFs install pymupdf.",
+            "ocr_available": document_service.OCR_AVAILABLE,
+            "pdf_available": document_service.PDF_AVAILABLE,
+        }
+    expenses_data = llm_service.extract_expenses_from_document(combined_text)
+    uid = _user_id()
+    added = []
+    for exp in expenses_data:
+        try:
+            eid = database.save_expense(
+                date=exp["date"],
+                category=exp["category"],
+                amount=exp["amount"],
+                currency=exp.get("currency") or "USD",
+                raw_text=message or "From uploaded document",
+                merchant=exp.get("merchant"),
+                subcategory=None,
+                source_type="document_upload",
+                confidence_score=0.7,
+                is_verified=0,
+                extracted_json=None,
+                correction_json=None,
+                user_id=uid,
+            )
+            row = database.get_expense(eid)
+            if row:
+                added.append(_row_to_response(row))
+        except Exception:
+            continue
+    return {
+        "added": len(added),
+        "expenses": added,
+        "message": f"Added {len(added)} expense(s) from your document(s)." if added else "No expenses could be extracted from the document text.",
+        "ocr_available": document_service.OCR_AVAILABLE,
+        "pdf_available": document_service.PDF_AVAILABLE,
+    }
 
 
 @app.post("/monthly-summary")
@@ -552,7 +625,10 @@ async def chat_message(body: ChatRequest):
     """
     try:
         import chat_service
-        return chat_service.handle_chat_message(body.message.strip(), source_type="chat", user_id=_user_id())
+        history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
+        return chat_service.handle_chat_message(
+            body.message.strip(), source_type="chat", user_id=_user_id(), history=history
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

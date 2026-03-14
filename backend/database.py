@@ -504,7 +504,7 @@ def query_expenses_safe(
         params.append(max_amount)
     user_clause = _expense_user_clause(cursor, params, user_id)
     where = " AND ".join(conditions) if conditions else "1=1"
-    where = where + user_clause.strip()
+    where = (where + user_clause).strip()
     allowed_order = {"date DESC": "date DESC", "date ASC": "date ASC", "amount DESC": "amount DESC", "amount ASC": "amount ASC"}
     order_clause = allowed_order.get(order_by, "date DESC")
     limit = max(1, min(500, int(limit)))

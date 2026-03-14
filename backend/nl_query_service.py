@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import List, Dict, Optional, Tuple, Any
 
-ALLOWED_INTENTS = {"sum", "list", "compare", "top_category", "top_month", "merchant_total", "category_total"}
+ALLOWED_INTENTS = {"sum", "list", "compare", "top_category", "top_month", "merchant_total", "category_total", "category_breakdown"}
 ALLOWED_CATEGORIES = {"food", "transport", "shopping", "entertainment", "utilities", "healthcare", "other"}
 
 # Keywords that suggest out-of-scope (financial advice, prediction, etc.)
@@ -22,6 +22,9 @@ OUT_OF_SCOPE_PATTERNS = [
 
 # Rule-based: relative date patterns
 RELATIVE_DATE = {
+    "last week": "last_week",
+    "past week": "last_week",
+    "this week": "this_week",
     "last month": "last_month",
     "past month": "last_month",
     "this month": "this_month",
@@ -51,11 +54,36 @@ def _parse_date(s: str) -> Optional[datetime]:
         return None
 
 
-def _resolve_date_range(relative: Optional[str], start_date: Optional[str], end_date: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+# Word to number for "last two days", "past seven days", etc.
+_DAYS_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+
+
+def _resolve_date_range(
+    relative: Optional[str],
+    start_date: Optional[str],
+    end_date: Optional[str],
+    n_days: Optional[int] = None,
+) -> Tuple[Optional[str], Optional[str]]:
     """Return (start_date, end_date) YYYY-MM-DD. Prefer explicit start/end; else resolve relative."""
     if start_date and end_date:
         return (start_date[:10], end_date[:10])
     now = datetime.now()
+    if relative == "last_n_days" and n_days and n_days >= 1:
+        end = now
+        start = now - timedelta(days=n_days - 1)
+        return (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+    # Monday = 0, Sunday = 6
+    if relative == "last_week":
+        # Previous calendar week (Mon–Sun)
+        days_since_monday = now.weekday()
+        last_week_end = now - timedelta(days=days_since_monday + 1)
+        last_week_start = last_week_end - timedelta(days=6)
+        return (last_week_start.strftime("%Y-%m-%d"), last_week_end.strftime("%Y-%m-%d"))
+    if relative == "this_week":
+        # This week so far (Mon–today)
+        days_since_monday = now.weekday()
+        this_week_start = now - timedelta(days=days_since_monday)
+        return (this_week_start.strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d"))
     if relative == "last_month":
         first = (now.replace(day=1) - timedelta(days=1)).replace(day=1)
         last = now.replace(day=1) - timedelta(days=1)
@@ -98,12 +126,27 @@ def parse_question_rules(question: str) -> Optional[Dict[str, Any]]:
         "limit": 50,
         "sort": "date_desc",
         "date_relative": None,
+        "n_days": None,
     }
-    # Relative date
-    for phrase, rel in RELATIVE_DATE.items():
-        if phrase in q:
-            out["date_relative"] = rel
-            break
+    # "Last N days" / "past N days" (takes precedence over "last week" etc.)
+    last_n_m = re.search(
+        r"\b(?:last|past)\s+(?:(\d+)|(one|two|three|four|five|six|seven|eight|nine|ten))\s+days?\b",
+        q,
+        re.I,
+    )
+    if last_n_m:
+        num = last_n_m.group(1)
+        if num:
+            out["n_days"] = min(90, max(1, int(num)))
+        else:
+            out["n_days"] = _DAYS_WORDS.get((last_n_m.group(2) or "").lower(), 7)
+        out["date_relative"] = "last_n_days"
+    else:
+        # Relative date (last week, this month, etc.)
+        for phrase, rel in RELATIVE_DATE.items():
+            if phrase in q:
+                out["date_relative"] = rel
+                break
     # Year: e.g. "in 2025"
     year_m = re.search(r"\b(20\d{2})\b", q)
     if year_m:
@@ -143,11 +186,15 @@ def parse_question_rules(question: str) -> Optional[Dict[str, Any]]:
         out["intent"] = "merchant_total"
     if re.search(r"\b(category|grocery|food)\s+total\b", q) or (out["category"] and "how much" in q):
         out["intent"] = "category_total" if out["intent"] == "sum" else out["intent"]
+    if re.search(r"\b(break\s*(it\s*)?down\s*by\s*category|by\s*category|per\s*category|category\s*breakdown)\b", q):
+        out["intent"] = "category_breakdown"
     return out
 
 
-def parse_question_llm(question: str) -> Optional[Dict[str, Any]]:
-    """Use LLM to extract ONLY structured schema (JSON). Never SQL."""
+def parse_question_llm(
+    question: str, conversation_context: Optional[List[Dict[str, str]]] = None
+) -> Optional[Dict[str, Any]]:
+    """Use LLM to extract ONLY structured schema (JSON). Never SQL. Optional conversation_context for follow-ups."""
     try:
         from llm_service import call_ollama
     except ImportError:
@@ -156,11 +203,19 @@ def parse_question_llm(question: str) -> Optional[Dict[str, Any]]:
 
 Allowed intents: sum, list, top_category, top_month, merchant_total, category_total
 Allowed categories: food, transport, shopping, entertainment, utilities, healthcare, other
-Date: use "last_month", "this_month", "this_year", "last_year" or specific YYYY-MM-DD for start_date/end_date.
+Date: use "last_week", "this_week", "last_month", "this_month", "this_year", "last_year" or "last_n_days" (and infer n_days from "last 3 days" etc.) or specific YYYY-MM-DD for start_date/end_date.
 Merchant: any merchant name the user mentions (e.g. Uber, Amazon, Starbucks).
 Amount: min_amount (over/above X), max_amount (under/below X).
+If the user's message is a follow-up (e.g. "break it down by category", "what about food?"), use the same date range as in the previous assistant answer if the user did not specify a new range.
 
-User question: """
+"""
+    if conversation_context and len(conversation_context) > 0:
+        prompt += "Recent conversation (for context):\n"
+        for m in conversation_context[-6:]:
+            prompt += f"{m.get('role', 'user')}: {m.get('content', '')[:200]}\n"
+        prompt += "\nCurrent question: "
+    else:
+        prompt += "User question: "
     prompt += question.strip() + "\n\nRespond ONLY with valid JSON in this exact format (use null for missing):\n"
     prompt += '{"intent": "sum", "start_date": null, "end_date": null, "category": null, "merchant": null, "min_amount": null, "max_amount": null, "date_relative": "last_month"}\nJSON:'
     try:
@@ -182,6 +237,7 @@ User question: """
             "limit": 50,
             "sort": "date_desc",
             "date_relative": data.get("date_relative"),
+            "n_days": data.get("n_days"),
         }
         if out["intent"] not in ALLOWED_INTENTS:
             out["intent"] = "sum"
@@ -204,6 +260,7 @@ def validate_and_resolve(parsed: Dict[str, Any]) -> Dict[str, Any]:
         parsed.get("date_relative"),
         parsed.get("start_date"),
         parsed.get("end_date"),
+        parsed.get("n_days"),
     )
     return {
         "intent": intent,
@@ -216,6 +273,7 @@ def validate_and_resolve(parsed: Dict[str, Any]) -> Dict[str, Any]:
         "max_amount": parsed.get("max_amount"),
         "limit": max(1, min(500, int(parsed.get("limit") or 50))),
         "sort": parsed.get("sort") or "date_desc",
+        "n_days": parsed.get("n_days"),
     }
 
 
@@ -259,6 +317,13 @@ def execute_query(parsed: Dict[str, Any]) -> Tuple[List[Dict], Dict[str, Any]]:
                 top = max(by_cat.items(), key=lambda x: x[1])
                 aggregates["top_category"] = top[0]
                 aggregates["top_category_total"] = round(top[1], 2)
+        # Always compute by_category for sum/category_breakdown so answers can show breakdown
+        by_cat: Dict[str, float] = defaultdict(float)
+        for r in rows:
+            c = (r.get("category") or "other").lower()
+            by_cat[c] += float(r.get("amount") or 0)
+        if by_cat:
+            aggregates["by_category"] = {k: round(v, 2) for k, v in sorted(by_cat.items(), key=lambda x: -x[1])}
     return (rows, aggregates)
 
 
@@ -269,10 +334,18 @@ def format_answer(parsed: Dict[str, Any], rows: List[Dict], aggregates: Dict[str
         return "I didn't find any expenses matching that."
     total = aggregates.get("total", 0)
     count = aggregates.get("count", 0)
+    by_cat = aggregates.get("by_category") or {}
+    def _breakdown_line() -> str:
+        if not by_cat:
+            return ""
+        parts = [f"{c}: **${v:,.2f}**" for c, v in by_cat.items()]
+        return "\nBy category: " + ", ".join(parts)
+    if intent == "category_breakdown":
+        return f"You spent **${total:,.2f}** across **{count}** transaction(s).{_breakdown_line()}"
     if intent == "sum" or intent == "category_total" or intent == "merchant_total":
-        return f"You spent **${total:,.2f}** across **{count}** matching transaction(s)."
+        return f"You spent **${total:,.2f}** across **{count}** matching transaction(s).{_breakdown_line()}"
     if intent == "list":
-        return f"Found **{count}** matching transaction(s). Total: **${total:,.2f}**."
+        return f"Found **{count}** matching transaction(s). Total: **${total:,.2f}**.{_breakdown_line()}"
     if intent == "top_month":
         m = aggregates.get("top_month", "")
         t = aggregates.get("top_month_total", 0)
@@ -284,9 +357,10 @@ def format_answer(parsed: Dict[str, Any], rows: List[Dict], aggregates: Dict[str
     return f"Found **{count}** transaction(s). Total: **${total:,.2f}**."
 
 
-def answer_question(question: str) -> Dict[str, Any]:
+def answer_question(question: str, conversation_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     """
     Full pipeline: parse -> validate -> query -> format.
+    conversation_history: list of {"role": "user"|"assistant", "content": "..."} for follow-up context.
     Returns dict with question, parsed_query, answer_text, rows, aggregates, refused.
     """
     if is_out_of_scope(question):
@@ -300,7 +374,7 @@ def answer_question(question: str) -> Dict[str, Any]:
         }
     parsed = parse_question_rules(question)
     if not parsed:
-        parsed = parse_question_llm(question)
+        parsed = parse_question_llm(question, conversation_context=conversation_history or [])
     if not parsed:
         parsed = {"intent": "sum", "start_date": None, "end_date": None, "limit": 50, "sort": "date_desc"}
     parsed = validate_and_resolve(parsed)

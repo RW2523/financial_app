@@ -132,8 +132,14 @@ class AskRequest(BaseModel):
     question: str
 
 
+class ChatMessage(BaseModel):
+    role: str  # "user" | "assistant"
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: Optional[List[ChatMessage]] = None
 
 
 class AuthRegisterRequest(BaseModel):

@@ -183,8 +183,14 @@ export type ChatResponse =
   | { type: "expense_added"; expense: { id?: number; date: string; category: string; amount: number; currency: string; raw_text?: string }; message: string }
   | { type: "answer"; answer_text: string; question: string; refused?: boolean; rows?: unknown[]; aggregates?: unknown };
 
-export async function chat(message: string): Promise<ChatResponse> {
-  return apiFetch("/chat", { method: "POST", body: JSON.stringify({ message }) });
+export async function chat(
+  message: string,
+  history?: { role: string; content: string }[]
+): Promise<ChatResponse> {
+  return apiFetch("/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, history: history ?? [] }),
+  });
 }
 
 export async function chatVoice(file: Blob): Promise<ChatResponse & { transcript?: string }> {
@@ -192,6 +198,31 @@ export async function chatVoice(file: Blob): Promise<ChatResponse & { transcript
   const form = new FormData();
   form.append("file", file, "audio.wav");
   const res = await fetch(`${base}/chat-voice`, { method: "POST", body: form, headers: getApiHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface DocumentExpensesResponse {
+  added: number;
+  expenses: Expense[];
+  message: string;
+  ocr_available?: boolean;
+  pdf_available?: boolean;
+}
+
+export async function addDocumentExpenses(
+  files: File[],
+  message?: string
+): Promise<DocumentExpensesResponse> {
+  const base = getBaseUrl();
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  if (message != null && message.trim()) form.append("message", message.trim());
+  const res = await fetch(`${base}/add-document-expenses`, {
+    method: "POST",
+    body: form,
+    headers: getApiHeaders(),
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

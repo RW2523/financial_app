@@ -1,6 +1,6 @@
 """
-Unified chat: add expenses or answer questions from a single message.
-Intent: if message looks like a question -> Ask. Else -> try Add expense, fallback to Ask.
+Unified chat: add expenses, run app actions (limits, goals, affordability, etc.), or answer questions.
+Intent order: action (help, set limit, goals, …) -> question -> add expense -> fallback ask.
 """
 import re
 import json
@@ -29,7 +29,12 @@ def _is_question(text: str) -> bool:
     return False
 
 
-def handle_chat_message(message: str, source_type: str = "chat", user_id: str = None) -> dict:
+def handle_chat_message(
+    message: str,
+    source_type: str = "chat",
+    user_id: str = None,
+    history: list = None,
+) -> dict:
     """
     Process one chat message: either add an expense or answer a question.
     Returns a dict suitable for JSON response:
@@ -38,11 +43,27 @@ def handle_chat_message(message: str, source_type: str = "chat", user_id: str = 
     """
     msg = (message or "").strip()
     if not msg:
-        return {"type": "answer", "answer_text": "Send a message to add an expense or ask a question.", "question": ""}
+        return {"type": "answer", "answer_text": "Send a message to add an expense, ask a question, or try \"Help\" to see what I can do.", "question": ""}
+
+    # 1) Try app actions (limits, goals, affordability, forecast, alerts, Gmail, help, etc.)
+    try:
+        import chat_actions as ca
+        action_result = ca.try_action(msg, user_id=user_id)
+        if action_result is not None:
+            return {
+                "type": "answer",
+                "answer_text": action_result.get("message", "Done."),
+                "question": msg,
+                "refused": False,
+                "rows": [],
+                "aggregates": None,
+            }
+    except Exception:
+        pass
 
     if _is_question(msg):
         import nl_query_service as nq
-        result = nq.answer_question(msg)
+        result = nq.answer_question(msg, conversation_history=history or [])
         return {
             "type": "answer",
             "answer_text": result.get("answer_text", ""),
@@ -106,7 +127,7 @@ def handle_chat_message(message: str, source_type: str = "chat", user_id: str = 
     else:
         # Fallback: treat as question
         import nl_query_service as nq
-        result = nq.answer_question(msg)
+        result = nq.answer_question(msg, conversation_history=history or [])
         return {
             "type": "answer",
             "answer_text": result.get("answer_text", "I couldn't log that as an expense. Try: \"$50 on groceries yesterday\" or ask: \"How much did I spend on food?\"."),

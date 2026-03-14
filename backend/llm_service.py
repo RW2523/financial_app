@@ -1,7 +1,7 @@
 import json
 import requests
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Any
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.1"
@@ -100,6 +100,77 @@ def extract_expense_data(text: str) -> Dict:
 
     except Exception as e:
         raise ValueError(f"Failed to parse LLM response: {str(e)}\nResponse: {response}")
+
+
+DOCUMENT_EXTRACTION_PROMPT = """You are an expense extraction assistant. The user has provided a document (receipt, invoice, or list of expenses). Extract EVERY expense line or total from the text.
+
+Today's date is {today_iso}. Use it when no date is given.
+
+For each expense extract:
+- date: YYYY-MM-DD (use document date or today if not found)
+- category: one of [food, transport, shopping, entertainment, utilities, healthcare, other]
+- amount: numeric value only
+- currency: USD, EUR, INR, etc. (default USD)
+- merchant: store/vendor name if visible (optional)
+
+Document text:
+---
+{text}
+---
+
+Respond ONLY with a valid JSON array. Each element has: "date", "category", "amount", "currency", and optionally "merchant".
+Example: [{{"date": "2025-02-06", "category": "food", "amount": 25.50, "currency": "USD", "merchant": "Starbucks"}}]
+If there is only one total with no line items, return one object in an array.
+JSON array:"""
+
+
+def extract_expenses_from_document(text: str) -> List[Dict[str, Any]]:
+    """Extract all expenses from a document/receipt text. Returns list of dicts with date, category, amount, currency, merchant."""
+    if not (text or text.strip()):
+        return []
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    prompt = DOCUMENT_EXTRACTION_PROMPT.format(text=text.strip()[:8000], today_iso=today_iso)
+    response = call_ollama(prompt, temperature=0.1)
+    try:
+        start = response.find("[")
+        end = response.rfind("]") + 1
+        if start == -1 or end <= start:
+            return []
+        arr = json.loads(response[start:end])
+        if not isinstance(arr, list):
+            arr = [arr] if isinstance(arr, dict) else []
+        out = []
+        for item in arr:
+            if not isinstance(item, dict):
+                continue
+            date_val = item.get("date") or today_iso
+            if isinstance(date_val, str):
+                date_val = _fix_extracted_date(date_val)
+            else:
+                date_val = today_iso
+            cat = (item.get("category") or "other").strip().lower()
+            if cat not in ("food", "transport", "shopping", "entertainment", "utilities", "healthcare", "other"):
+                cat = "other"
+            try:
+                amount = float(item.get("amount") or 0)
+            except (TypeError, ValueError):
+                amount = 0
+            if amount <= 0:
+                continue
+            currency = (item.get("currency") or "USD").strip().upper()[:3]
+            merchant = item.get("merchant")
+            if isinstance(merchant, str):
+                merchant = merchant.strip() or None
+            out.append({
+                "date": date_val,
+                "category": cat,
+                "amount": amount,
+                "currency": currency,
+                "merchant": merchant,
+            })
+        return out
+    except Exception:
+        return []
 
 
 def generate_monthly_summary(expenses: list) -> str:
