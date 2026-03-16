@@ -215,8 +215,8 @@ except Exception:
     _alerts = []
 
 # Tabs for different functions
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
-    "➕ Add", "📊 View", "📈 Summary", "📉 Dashboard", "🔔 Limits", "📧 Gmail", "✏️ Review Queue", "🔄 Recurring", "📋 Insights", "🤖 Ask AI", "🎯 Goals", "💳 Affordability", "🔮 Simulator"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
+    "➕ Add", "📊 View", "📈 Summary", "📉 Dashboard", "🔔 Limits", "📧 Gmail", "✏️ Review Queue", "🔄 Recurring", "📋 Insights", "🤖 Ask AI", "🎯 Goals", "💳 Affordability", "🔮 Simulator", "🏦 Wealth Hub"
 ])
 
 if _alerts:
@@ -1343,6 +1343,215 @@ with tab13:
             except Exception as e:
                 st.error(f"Connection error: {e}")
 
+# TAB 14: Wealth Hub
+with tab14:
+    st.header("🏦 Wealth Hub")
+    st.caption("Salary, investments, portfolio, cashflow, projections, and grounded suggestions.")
+    wh_year = datetime.now().year
+    wh_month = datetime.now().month
+    wh_sub1, wh_sub2, wh_sub3, wh_sub4, wh_sub5, wh_sub6 = st.tabs([
+        "💰 Salary", "📈 Investments", "📊 Portfolio", "💵 Cashflow", "🔮 Projections", "💡 Suggestions"
+    ])
+
+    with wh_sub1:
+        st.subheader("Salary / Income")
+        try:
+            r = requests.get(f"{get_api_url()}/wealth/salary/summary", params={"year": wh_year, "month": wh_month}, timeout=10)
+            if r.status_code == 200:
+                sm = r.json()
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Net income (month)", f"${sm.get('net_income', 0):,.2f}", "")
+                with c2:
+                    st.metric("Bonus", f"${sm.get('bonus_total', 0):,.2f}", "")
+                with c3:
+                    st.metric("Records", sm.get('record_count', 0), "")
+            else:
+                st.caption("Could not load summary.")
+        except Exception as e:
+            st.caption(f"Error: {e}")
+        with st.expander("Add salary record"):
+            with st.form("salary_form"):
+                s_date = st.text_input("Date", value=datetime.now().strftime("%Y-%m-%d"), key="salary_date")
+                s_source = st.text_input("Source", value="Salary", key="salary_source")
+                s_gross = st.number_input("Gross", min_value=0.0, value=5000.0, step=100.0, key="salary_gross")
+                s_deductions = st.number_input("Deductions", min_value=0.0, value=0.0, step=50.0, key="salary_ded")
+                s_bonus = st.number_input("Bonus", min_value=0.0, value=0.0, step=100.0, key="salary_bonus")
+                s_notes = st.text_input("Notes", value="", key="salary_notes")
+                if st.form_submit_button("Add"):
+                    net = s_gross - s_deductions
+                    payload = {"date": s_date[:10], "source": s_source, "gross_amount": s_gross, "deductions": s_deductions, "net_amount": net, "bonus_amount": s_bonus, "notes": s_notes or None}
+                    try:
+                        rr = requests.post(f"{get_api_url()}/wealth/salary", json=payload, timeout=10)
+                        if rr.status_code == 200:
+                            st.success("Added.")
+                            st.rerun()
+                        else:
+                            st.error(rr.text)
+                    except Exception as ex:
+                        st.error(str(ex))
+        try:
+            r_list = requests.get(f"{get_api_url()}/wealth/salary", params={"year": wh_year, "month": wh_month}, timeout=10)
+            if r_list.status_code == 200 and r_list.json():
+                df_sal = pd.DataFrame(r_list.json())
+                st.dataframe(df_sal, use_container_width=True, hide_index=True)
+        except Exception:
+            st.caption("No salary records or error loading.")
+
+    with wh_sub2:
+        st.subheader("Investment transactions")
+        with st.expander("Add transaction"):
+            with st.form("inv_form"):
+                inv_ticker = st.text_input("Ticker", value="AAPL", key="inv_ticker")
+                inv_name = st.text_input("Stock name (optional)", value="", key="inv_name")
+                inv_type = st.selectbox("Type", ["BUY", "SELL", "DIVIDEND"], key="inv_type")
+                inv_qty = st.number_input("Quantity", min_value=0.0, value=10.0, step=1.0, key="inv_qty")
+                inv_price = st.number_input("Price", min_value=0.0, value=150.0, step=0.01, key="inv_price")
+                inv_fees = st.number_input("Fees", min_value=0.0, value=0.0, step=0.01, key="inv_fees")
+                inv_date = st.text_input("Date", value=datetime.now().strftime("%Y-%m-%d"), key="inv_date")
+                inv_broker = st.text_input("Broker (optional)", value="", key="inv_broker")
+                inv_notes = st.text_input("Notes", value="", key="inv_notes")
+                if st.form_submit_button("Add"):
+                    payload = {"ticker": inv_ticker.strip().upper(), "stock_name": inv_name.strip() or None, "transaction_type": inv_type, "quantity": inv_qty, "price": inv_price, "fees": inv_fees, "date": inv_date[:10], "broker": inv_broker.strip() or None, "notes": inv_notes.strip() or None}
+                    try:
+                        rr = requests.post(f"{get_api_url()}/wealth/investments", json=payload, timeout=10)
+                        if rr.status_code == 200:
+                            st.success("Added.")
+                            st.rerun()
+                        else:
+                            st.error(rr.text)
+                    except Exception as ex:
+                        st.error(str(ex))
+        try:
+            r_inv = requests.get(f"{get_api_url()}/wealth/investments", timeout=10)
+            if r_inv.status_code == 200 and r_inv.json():
+                st.dataframe(pd.DataFrame(r_inv.json()), use_container_width=True, hide_index=True)
+            else:
+                st.caption("No transactions.")
+        except Exception as e:
+            st.caption(f"Error: {e}")
+
+    with wh_sub3:
+        st.subheader("Portfolio")
+        try:
+            r_port = requests.get(f"{get_api_url()}/wealth/portfolio", timeout=10)
+            if r_port.status_code == 200:
+                data = r_port.json()
+                m1, m2, m3, m4 = st.columns(4)
+                with m1:
+                    st.metric("Current value", f"${data.get('total_current_value', 0):,.2f}", "")
+                with m2:
+                    st.metric("Total invested", f"${data.get('total_invested', 0):,.2f}", "")
+                with m3:
+                    st.metric("Realized P&L", f"${data.get('total_realized_pnl', 0):,.2f}", "")
+                with m4:
+                    st.metric("Unrealized P&L", f"${data.get('total_unrealized_pnl', 0):,.2f}", "")
+                holdings = data.get("holdings") or []
+                if holdings:
+                    df_h = pd.DataFrame(holdings)
+                    st.dataframe(df_h, use_container_width=True, hide_index=True)
+                    if "ticker" in df_h.columns and "total_invested" in df_h.columns and df_h["total_invested"].sum() > 0:
+                        fig = px.pie(df_h, values="total_invested", names="ticker", title="Allocation")
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No holdings. Add BUY transactions in Investments.")
+            else:
+                st.error(r_port.text or "Failed to load portfolio.")
+        except Exception as e:
+            st.error(f"Connection error: {e}")
+
+    with wh_sub4:
+        st.subheader("Cashflow")
+        try:
+            r_cf = requests.get(f"{get_api_url()}/wealth/cashflow", params={"year": wh_year, "month": wh_month}, timeout=10)
+            if r_cf.status_code == 200:
+                cf = r_cf.json()
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("Income", f"${cf.get('total_income', 0):,.2f}", "")
+                with c2:
+                    st.metric("Expenses", f"${cf.get('total_expenses', 0):,.2f}", "")
+                with c3:
+                    st.metric("Invested", f"${cf.get('total_invested', 0):,.2f}", "")
+                with c4:
+                    st.metric("Free cash", f"${cf.get('free_cash', 0):,.2f}", "")
+                st.caption(f"Savings ratio: {cf.get('savings_ratio', 0):.1f}% · Investment ratio: {cf.get('investment_ratio', 0):.1f}% · Expense ratio: {cf.get('expense_ratio', 0):.1f}%")
+            else:
+                st.caption("Could not load cashflow.")
+        except Exception as e:
+            st.caption(f"Error: {e}")
+
+    with wh_sub5:
+        st.subheader("Projections")
+        mode = st.selectbox("Portfolio growth", ["no_growth", "conservative", "moderate", "aggressive"], index=2, key="proj_mode")
+        try:
+            r_proj = requests.get(f"{get_api_url()}/wealth/projections", params={"year": wh_year, "month": wh_month, "portfolio_growth_mode": mode}, timeout=10)
+            if r_proj.status_code == 200:
+                p = r_proj.json()
+                st.metric("Projected EOM expenses", f"${p.get('projected_end_of_month_expenses', 0):,.2f}", "")
+                st.metric("Projected monthly surplus", f"${p.get('projected_monthly_surplus', 0):,.2f}", "")
+                st.metric("Projected yearly invested", f"${p.get('projected_yearly_invested', 0):,.2f}", "")
+                pp = p.get("portfolio_projection") or {}
+                st.caption(f"Portfolio projection: 6m ${pp.get('6m', 0):,.2f} · 1y ${pp.get('1y', 0):,.2f} · 3y ${pp.get('3y', 0):,.2f} ({mode})")
+            else:
+                st.caption("Could not load projections.")
+        except Exception as e:
+            st.caption(f"Error: {e}")
+
+    with wh_sub6:
+        st.subheader("Suggestions")
+        try:
+            r_sug = requests.get(f"{get_api_url()}/wealth/suggestions", params={"year": wh_year, "month": wh_month}, timeout=10)
+            if r_sug.status_code == 200:
+                sug_data = r_sug.json()
+                suggestions_list = sug_data.get("suggestions") or []
+                if suggestions_list:
+                    for s in suggestions_list:
+                        sev = s.get("severity", "medium")
+                        if sev == "high":
+                            st.error(f"**{s.get('title', '')}** — {s.get('message', '')}")
+                        elif sev == "medium":
+                            st.warning(f"**{s.get('title', '')}** — {s.get('message', '')}")
+                        else:
+                            st.info(f"**{s.get('title', '')}** — {s.get('message', '')}")
+                else:
+                    st.success("No suggestions; metrics look healthy.")
+            else:
+                st.caption("Could not load suggestions.")
+        except Exception as e:
+            st.caption(f"Error: {e}")
+
+    st.divider()
+    st.subheader("Stock lookup & affordability")
+    ticker_lookup = st.text_input("Ticker", value="AAPL", key="stock_ticker")
+    if st.button("Stock details", key="stock_btn"):
+        try:
+            r_stock = requests.get(f"{get_api_url()}/wealth/stock/details", params={"ticker": ticker_lookup.strip()}, timeout=10)
+            if r_stock.status_code == 200:
+                d = r_stock.json()
+                st.json(d)
+            else:
+                st.error(r_stock.text)
+        except Exception as ex:
+            st.error(str(ex))
+    qty_aff = st.number_input("Quantity (for affordability)", min_value=0.0, value=10.0, key="aff_qty")
+    price_aff = st.number_input("Price per share", min_value=0.0, value=150.0, key="aff_price")
+    if st.button("Can I buy this?", type="primary", key="aff_stock_btn"):
+        try:
+            r_aff = requests.post(f"{get_api_url()}/wealth/stock/affordability", json={"ticker": ticker_lookup.strip().upper(), "quantity": qty_aff, "price_per_share": price_aff}, timeout=10)
+            if r_aff.status_code == 200:
+                a = r_aff.json()
+                if a.get("affordable"):
+                    st.success(a.get("message", ""))
+                else:
+                    st.warning(a.get("message", ""))
+                for reason in a.get("reasons", []):
+                    st.caption(f"• {reason}")
+            else:
+                st.error(r_aff.text)
+        except Exception as ex:
+            st.error(str(ex))
+
 # Sidebar
 with st.sidebar:
     st.header("Settings")
@@ -1386,6 +1595,10 @@ with st.sidebar:
             ("GET", "/insights/health-score"),
             ("GET", "/goals"),
             ("GET", "/gmail/status"),
+            ("GET", "/wealth/salary/summary"),
+            ("GET", "/wealth/portfolio"),
+            ("GET", "/wealth/cashflow"),
+            ("GET", "/wealth/suggestions"),
         ]
         for method, path in endpoints:
             try:

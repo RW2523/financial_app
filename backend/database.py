@@ -309,8 +309,87 @@ def init_database():
     _ensure_column_and_backfill(conn, "gmail_processed", "user_id", "TEXT DEFAULT 'local'")
     _ensure_merchants_user_id(conn)
 
+    _ensure_wealth_hub_tables(conn)
+
     conn.commit()
     conn.close()
+
+
+def _ensure_wealth_hub_tables(conn):
+    """Wealth Hub: salary_income, investment_transactions, portfolio_snapshots, stock_watchlist, wealth_liabilities. Backward-compatible migrations for watchlist columns."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS salary_income (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            date TEXT NOT NULL,
+            source TEXT NOT NULL,
+            gross_amount REAL NOT NULL,
+            deductions REAL DEFAULT 0,
+            net_amount REAL NOT NULL,
+            bonus_amount REAL DEFAULT 0,
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_salary_user_date ON salary_income(user_id, date)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS investment_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            ticker TEXT NOT NULL,
+            stock_name TEXT,
+            transaction_type TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            price REAL NOT NULL,
+            fees REAL DEFAULT 0,
+            date TEXT NOT NULL,
+            broker TEXT,
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inv_user_date ON investment_transactions(user_id, date)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            ticker TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            avg_cost REAL NOT NULL,
+            snapshot_date TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            ticker TEXT NOT NULL,
+            stock_name TEXT,
+            added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, ticker)
+        )
+    """)
+    # Optional columns for watchlist (migration)
+    for col, ctype in [("target_buy_price", "REAL"), ("current_price", "REAL"), ("sector", "TEXT"), ("notes", "TEXT")]:
+        cursor.execute(f"PRAGMA table_info(stock_watchlist)")
+        if not any(r[1] == col for r in cursor.fetchall()):
+            cursor.execute(f"ALTER TABLE stock_watchlist ADD COLUMN {col} {ctype}")
+    # Liabilities for net worth
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS wealth_liabilities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'local',
+            name TEXT NOT NULL,
+            balance REAL NOT NULL DEFAULT 0,
+            liability_type TEXT,
+            notes TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_liabilities_user ON wealth_liabilities(user_id)")
+    conn.commit()
 
 
 def _ensure_column_and_backfill(conn, table: str, column: str, col_type: str):
@@ -1103,8 +1182,9 @@ def add_merchant_alias(merchant_id: int, alias_text: str) -> None:
 
 def clear_all_data(user_id: str = None) -> dict:
     """
-    Delete all expenses, limits, goals, and recurring data for the given user.
-    Returns counts of deleted rows: { "expenses": N, "limits": N, "goals": N, "recurring": N, "gmail_processed": N }.
+    Delete all expenses, limits, goals, recurring, Gmail state, and Wealth Hub data for the given user.
+    Returns counts: expenses, limits, goals, recurring, gmail_processed, and wealth tables
+    (salary_income, investment_transactions, portfolio_snapshots, stock_watchlist, wealth_liabilities).
     """
     uid = _resolve_user_id(user_id)
     conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
@@ -1150,6 +1230,422 @@ def clear_all_data(user_id: str = None) -> dict:
         cursor.execute("DELETE FROM gmail_processed")
     counts["gmail_processed"] = cursor.rowcount
 
+    # Wealth Hub
+    for tbl in ("salary_income", "investment_transactions", "portfolio_snapshots", "stock_watchlist", "wealth_liabilities"):
+        try:
+            cursor.execute(f"DELETE FROM {tbl} WHERE user_id = ?", (uid,))
+            counts[tbl] = cursor.rowcount
+        except sqlite3.OperationalError:
+            counts[tbl] = 0
+
     conn.commit()
     conn.close()
     return counts
+
+
+# ---------- Wealth Hub: Salary ----------
+
+def create_salary_record(
+    date: str,
+    source: str,
+    gross_amount: float,
+    deductions: float = 0,
+    net_amount: float = None,
+    bonus_amount: float = 0,
+    notes: str = None,
+    user_id: str = None,
+) -> int:
+    uid = _resolve_user_id(user_id)
+    net = net_amount if net_amount is not None else (gross_amount - deductions)
+    date_val = (date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO salary_income (user_id, date, source, gross_amount, deductions, net_amount, bonus_amount, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (uid, date_val, source or "", float(gross_amount), float(deductions), float(net), float(bonus_amount or 0), notes or ""),
+    )
+    sid = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return sid
+
+
+def list_salary_records(user_id: str = None) -> List[Dict]:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM salary_income WHERE user_id = ? ORDER BY date DESC", (uid,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_salary_record(salary_id: int, user_id: str = None) -> Optional[Dict]:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM salary_income WHERE id = ? AND user_id = ?", (salary_id, uid))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_salary_record(
+    salary_id: int,
+    *,
+    date: str = None,
+    source: str = None,
+    gross_amount: float = None,
+    deductions: float = None,
+    net_amount: float = None,
+    bonus_amount: float = None,
+    notes: str = None,
+    user_id: str = None,
+) -> bool:
+    uid = _resolve_user_id(user_id)
+    row = get_salary_record(salary_id, uid)
+    if not row:
+        return False
+    updates = []
+    params = []
+    if date is not None:
+        updates.append("date = ?")
+        params.append(date[:10])
+    if source is not None:
+        updates.append("source = ?")
+        params.append(source)
+    if gross_amount is not None:
+        updates.append("gross_amount = ?")
+        params.append(float(gross_amount))
+    if deductions is not None:
+        updates.append("deductions = ?")
+        params.append(float(deductions))
+    if net_amount is not None:
+        updates.append("net_amount = ?")
+        params.append(float(net_amount))
+    if bonus_amount is not None:
+        updates.append("bonus_amount = ?")
+        params.append(float(bonus_amount))
+    if notes is not None:
+        updates.append("notes = ?")
+        params.append(notes)
+    if not updates:
+        return True
+    params.append(salary_id)
+    params.append(uid)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute(
+        f"UPDATE salary_income SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
+        params,
+    )
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def delete_salary_record(salary_id: int, user_id: str = None) -> bool:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM salary_income WHERE id = ? AND user_id = ?", (salary_id, uid))
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def get_monthly_income_summary(year: int, month: int, user_id: str = None) -> Dict:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    pattern = f"{year}-{month:02d}%"
+    cursor.execute(
+        """SELECT COALESCE(SUM(net_amount), 0) AS net, COALESCE(SUM(bonus_amount), 0) AS bonus,
+           COALESCE(SUM(gross_amount), 0) AS gross, COALESCE(SUM(deductions), 0) AS deductions,
+           COUNT(*) AS record_count
+           FROM salary_income WHERE user_id = ? AND date LIKE ?""",
+        (uid, pattern),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return {
+        "year": year,
+        "month": month,
+        "net_income": float(row[0]) if row else 0,
+        "bonus_total": float(row[1]) if row else 0,
+        "gross_total": float(row[2]) if row else 0,
+        "deductions_total": float(row[3]) if row else 0,
+        "record_count": int(row[4]) if row else 0,
+    }
+
+
+# ---------- Wealth Hub: Investment transactions ----------
+
+def create_investment_transaction(
+    ticker: str,
+    transaction_type: str,
+    quantity: float,
+    price: float,
+    date: str,
+    *,
+    stock_name: str = None,
+    fees: float = 0,
+    broker: str = None,
+    notes: str = None,
+    user_id: str = None,
+) -> int:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO investment_transactions (user_id, ticker, stock_name, transaction_type, quantity, price, fees, date, broker, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (uid, ticker.strip().upper(), stock_name or "", transaction_type.upper(), quantity, price, float(fees or 0), date[:10], broker or "", notes or ""),
+    )
+    tid = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return tid
+
+
+def list_investment_transactions(user_id: str = None, ticker: str = None) -> List[Dict]:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    if ticker:
+        cursor.execute(
+            "SELECT * FROM investment_transactions WHERE user_id = ? AND ticker = ? ORDER BY date DESC, id DESC",
+            (uid, ticker.strip().upper()),
+        )
+    else:
+        cursor.execute("SELECT * FROM investment_transactions WHERE user_id = ? ORDER BY date DESC, id DESC", (uid,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_investment_transaction(trans_id: int, user_id: str = None) -> Optional[Dict]:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM investment_transactions WHERE id = ? AND user_id = ?", (trans_id, uid))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_investment_transaction(
+    trans_id: int,
+    *,
+    ticker: str = None,
+    stock_name: str = None,
+    transaction_type: str = None,
+    quantity: float = None,
+    price: float = None,
+    fees: float = None,
+    date: str = None,
+    broker: str = None,
+    notes: str = None,
+    user_id: str = None,
+) -> bool:
+    uid = _resolve_user_id(user_id)
+    row = get_investment_transaction(trans_id, uid)
+    if not row:
+        return False
+    updates = []
+    params = []
+    for name, val in [
+        ("ticker", ticker),
+        ("stock_name", stock_name),
+        ("transaction_type", transaction_type),
+        ("quantity", quantity),
+        ("price", price),
+        ("fees", fees),
+        ("date", date),
+        ("broker", broker),
+        ("notes", notes),
+    ]:
+        if val is not None:
+            if name == "ticker":
+                val = val.strip().upper()
+            elif name == "date":
+                val = val[:10] if val else None
+            elif name in ("quantity", "price", "fees"):
+                val = float(val)
+            updates.append(f"{name} = ?")
+            params.append(val)
+    if not updates:
+        return True
+    params.append(trans_id)
+    params.append(uid)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute(
+        f"UPDATE investment_transactions SET {', '.join(updates)} WHERE id = ? AND user_id = ?",
+        params,
+    )
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def delete_investment_transaction(trans_id: int, user_id: str = None) -> bool:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM investment_transactions WHERE id = ? AND user_id = ?", (trans_id, uid))
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+# ---------- Wealth Hub: Watchlist ----------
+
+def add_watchlist_item(
+    ticker: str,
+    *,
+    stock_name: str = None,
+    target_buy_price: float = None,
+    current_price: float = None,
+    sector: str = None,
+    notes: str = None,
+    user_id: str = None,
+) -> int:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO stock_watchlist (user_id, ticker, stock_name, target_buy_price, current_price, sector, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, ticker) DO UPDATE SET stock_name=excluded.stock_name, target_buy_price=excluded.target_buy_price,
+           current_price=excluded.current_price, sector=excluded.sector, notes=excluded.notes""",
+        (uid, ticker.strip().upper(), stock_name or "", target_buy_price, current_price, sector or "", notes or ""),
+    )
+    cursor.execute("SELECT id FROM stock_watchlist WHERE user_id = ? AND ticker = ?", (uid, ticker.strip().upper()))
+    row = cursor.fetchone()
+    wid = row[0] if row else cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return wid
+
+
+def list_watchlist(user_id: str = None) -> List[Dict]:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(stock_watchlist)")
+    cols = [r[1] for r in cursor.fetchall()]
+    cursor.execute("SELECT * FROM stock_watchlist WHERE user_id = ? ORDER BY added_at DESC", (uid,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_watchlist_item(item_id: int, user_id: str = None) -> bool:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM stock_watchlist WHERE id = ? AND user_id = ?", (item_id, uid))
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def update_watchlist_item(item_id: int, *, target_buy_price: float = None, current_price: float = None, notes: str = None, user_id: str = None) -> bool:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    updates, params = [], []
+    if target_buy_price is not None:
+        updates.append("target_buy_price = ?")
+        params.append(target_buy_price)
+    if current_price is not None:
+        updates.append("current_price = ?")
+        params.append(current_price)
+    if notes is not None:
+        updates.append("notes = ?")
+        params.append(notes)
+    if not updates:
+        return True
+    params.extend([item_id, uid])
+    cursor.execute(f"UPDATE stock_watchlist SET {', '.join(updates)} WHERE id = ? AND user_id = ?", params)
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+# ---------- Wealth Hub: Liabilities (Net Worth) ----------
+
+def create_liability(
+    name: str,
+    balance: float,
+    *,
+    liability_type: str = None,
+    notes: str = None,
+    user_id: str = None,
+) -> int:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO wealth_liabilities (user_id, name, balance, liability_type, notes, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+        (uid, name or "", float(balance), liability_type or "", notes or ""),
+    )
+    lid = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return lid
+
+
+def list_liabilities(user_id: str = None) -> List[Dict]:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM wealth_liabilities WHERE user_id = ? ORDER BY id", (uid,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_liability(liability_id: int, *, name: str = None, balance: float = None, liability_type: str = None, notes: str = None, user_id: str = None) -> bool:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    updates, params = [], []
+    for k, v in [("name", name), ("balance", balance), ("liability_type", liability_type), ("notes", notes)]:
+        if v is not None:
+            updates.append(f"{k} = ?")
+            params.append(v if k != "balance" else float(v))
+    if not updates:
+        return True
+    params.extend([liability_id, uid])
+    cursor.execute(f"UPDATE wealth_liabilities SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?", params)
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def delete_liability(liability_id: int, user_id: str = None) -> bool:
+    uid = _resolve_user_id(user_id)
+    conn = sqlite3.connect(DATABASE_PATH, timeout=SQLITE_TIMEOUT)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM wealth_liabilities WHERE id = ? AND user_id = ?", (liability_id, uid))
+    ok = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return ok

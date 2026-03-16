@@ -236,3 +236,81 @@ class SimulateResponse(BaseModel):
     delta_summary: Dict[str, Any]
     projected_limit_changes: List[Dict[str, Any]]
     goal_impact: List[Dict[str, Any]]
+
+
+# ---------- Wealth Hub ----------
+
+class SalaryCreate(BaseModel):
+    date: str
+    source: str
+    gross_amount: float
+    deductions: float = 0
+    net_amount: Optional[float] = None
+    bonus_amount: float = 0
+    notes: Optional[str] = None
+
+
+class SalaryUpdate(BaseModel):
+    date: Optional[str] = None
+    source: Optional[str] = None
+    gross_amount: Optional[float] = None
+    deductions: Optional[float] = None
+    net_amount: Optional[float] = None
+    bonus_amount: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class InvestmentTransactionCreate(BaseModel):
+    ticker: str
+    stock_name: Optional[str] = None
+    transaction_type: str  # BUY | SELL | DIVIDEND
+    quantity: float
+    price: float
+    fees: float = 0
+    date: str
+    broker: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class InvestmentTransactionUpdate(BaseModel):
+    ticker: Optional[str] = None
+    stock_name: Optional[str] = None
+    transaction_type: Optional[str] = None
+    quantity: Optional[float] = None
+    price: Optional[float] = None
+    fees: Optional[float] = None
+    date: Optional[str] = None
+    broker: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class StockDetailsRequest(BaseModel):
+    ticker: str
+
+
+class StockDetailsResponse(BaseModel):
+    ticker: str
+    stock_name: Optional[str] = None
+    sector: Optional[str] = None
+    current_price: Optional[float] = None
+    change: Optional[float] = None
+    market_cap: Optional[str] = None
+    pe_ratio: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    range_52w: Optional[str] = None
+    source: str = "manual"  # manual | provider
+
+
+class StockAffordabilityRequest(BaseModel):
+    ticker: str
+    quantity: float
+    price_per_share: float
+
+
+class StockAffordabilityResponse(BaseModel):
+    affordable: bool
+    message: str
+    free_cash: float
+    cost: float
+    concentration_risk: Optional[bool] = None
+    reasons: List[str] = []

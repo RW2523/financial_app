@@ -124,7 +124,7 @@ def execute_action(intent: str, params: Dict[str, Any], user_id: str) -> Dict[st
                     "• **Goals** — \"My goals\", \"Add goal save 5000 by 2026\"\n"
                     "• **Affordability** — \"Can I afford 100 for dinner?\"\n"
                     "• **Forecast & alerts** — \"Forecast\", \"Alerts\", \"Projected spending\"\n"
-                    "• **Data** — \"Add sample data\", \"Sync Gmail\"\n"
+                    "• **Data** — \"Add sample data\" (expenses, limits, goals, Wealth Hub), \"Sync Gmail\"\n"
                     "• **Clear data** — Say \"clear all data confirm\" to reset (irreversible)\n\n"
                     "Ask in plain language; I'll do it or tell you what I need."
                 ),
@@ -246,15 +246,32 @@ def execute_action(intent: str, params: Dict[str, Any], user_id: str) -> Dict[st
         if intent == "seed_data":
             import seed_data
             result = seed_data.load_sample_data(user_id=uid)
-            return {"message": f"**Sample data added:** {result.get('expenses', 0)} expenses, {result.get('limits', 0)} limits, {result.get('goals', 0)} goals. Check Expenses and Budget.", "data": result}
+            msg = f"**Sample data added:** {result.get('expenses', 0)} expenses, {result.get('limits', 0)} limits, {result.get('goals', 0)} goals."
+            if result.get("salary_records") or result.get("investments") or result.get("watchlist") or result.get("liabilities"):
+                parts = []
+                if result.get("salary_records"): parts.append(f"{result['salary_records']} salary")
+                if result.get("investments"): parts.append(f"{result['investments']} investments")
+                if result.get("watchlist"): parts.append(f"{result['watchlist']} watchlist")
+                if result.get("liabilities"): parts.append(f"{result['liabilities']} liabilities")
+                msg += f" Wealth Hub: {', '.join(parts)}."
+            msg += " Check Expenses, Budget, and Wealth Hub."
+            return {"message": msg, "data": result}
 
         if intent == "clear_data_ask_confirm":
-            return {"message": "To **clear all your data** (expenses, limits, goals), say: **clear all data confirm**. This cannot be undone.", "data": None}
+            return {"message": "To **clear all your data** (expenses, limits, goals, and Wealth Hub), say: **clear all data confirm**. This cannot be undone.", "data": None}
 
         if intent == "clear_data":
             import database
             counts = database.clear_all_data(user_id=uid)
-            return {"message": f"**All data cleared.** Deleted: {counts.get('expenses', 0)} expenses, {counts.get('limits', 0)} limits, {counts.get('goals', 0)} goals.", "data": counts}
+            msg = f"**All data cleared.** Deleted: {counts.get('expenses', 0)} expenses, {counts.get('limits', 0)} limits, {counts.get('goals', 0)} goals."
+            wealth = []
+            if counts.get("salary_income"): wealth.append(f"{counts['salary_income']} salary")
+            if counts.get("investment_transactions"): wealth.append(f"{counts['investment_transactions']} investments")
+            if counts.get("stock_watchlist"): wealth.append(f"{counts['stock_watchlist']} watchlist")
+            if counts.get("wealth_liabilities"): wealth.append(f"{counts['wealth_liabilities']} liabilities")
+            if wealth:
+                msg += f" Wealth Hub: {', '.join(wealth)}."
+            return {"message": msg, "data": counts}
 
         if intent == "gmail_status":
             try:

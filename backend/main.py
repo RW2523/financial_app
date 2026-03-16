@@ -13,6 +13,8 @@ from models import (
     AuthRegisterRequest, AuthLoginRequest, AuthUserResponse,
     GoalCreate, GoalUpdate, AffordabilityRequest, AffordabilityResponse,
     ClearDataRequest, SimulateRequest, SimulateResponse,
+    SalaryCreate, SalaryUpdate, InvestmentTransactionCreate, InvestmentTransactionUpdate,
+    StockDetailsRequest, StockDetailsResponse, StockAffordabilityRequest, StockAffordabilityResponse,
 )
 import os
 import tempfile
@@ -801,7 +803,7 @@ async def clear_all_data_endpoint(body: ClearDataRequest):
 @app.post("/admin/seed-sample-data")
 async def seed_sample_data_endpoint():
     """
-    Add sample expenses (last 4 months), limits, and goals so the app makes sense with all elements.
+    Add sample expenses (last 4 months), limits, goals, and Wealth Hub data (salary, investments, watchlist, liability).
     """
     try:
         import seed_data
@@ -809,6 +811,337 @@ async def seed_sample_data_endpoint():
         return {"ok": True, **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Seed sample data failed: {str(e)}")
+
+
+# ---------- Wealth Hub ----------
+
+@app.get("/wealth/salary")
+async def list_salary(year: int = None, month: int = None):
+    """List salary records; optional year/month filter."""
+    records = database.list_salary_records(user_id=_user_id())
+    if year is not None and month is not None:
+        records = [r for r in records if (r.get("date") or "")[:7] == f"{year}-{month:02d}"]
+    return records
+
+
+@app.post("/wealth/salary")
+async def create_salary(body: SalaryCreate):
+    """Create a salary/income record."""
+    row = database.create_salary_record(
+        date=body.date,
+        source=body.source,
+        gross_amount=body.gross_amount,
+        deductions=body.deductions,
+        net_amount=body.net_amount,
+        bonus_amount=body.bonus_amount or 0,
+        notes=body.notes,
+        user_id=_user_id(),
+    )
+    return row
+
+
+@app.get("/wealth/salary/summary")
+async def salary_summary(year: int = None, month: int = None):
+    """Monthly income summary (net + bonus) for the given month."""
+    now = datetime.now()
+    y, m = year or now.year, month or now.month
+    return database.get_monthly_income_summary(y, m, user_id=_user_id())
+
+
+@app.get("/wealth/salary/{record_id}")
+async def get_salary(record_id: int):
+    """Get one salary record."""
+    row = database.get_salary_record(record_id, user_id=_user_id())
+    if not row:
+        raise HTTPException(status_code=404, detail="Salary record not found")
+    return row
+
+
+@app.put("/wealth/salary/{record_id}")
+async def update_salary(record_id: int, body: SalaryUpdate):
+    """Update a salary record."""
+    row = database.get_salary_record(record_id, user_id=_user_id())
+    if not row:
+        raise HTTPException(status_code=404, detail="Salary record not found")
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
+    database.update_salary_record(record_id, **updates)
+    return database.get_salary_record(record_id, user_id=_user_id())
+
+
+@app.delete("/wealth/salary/{record_id}")
+async def delete_salary(record_id: int):
+    """Delete a salary record."""
+    if not database.delete_salary_record(record_id, user_id=_user_id()):
+        raise HTTPException(status_code=404, detail="Salary record not found")
+    return {"ok": True}
+
+
+@app.get("/wealth/investments")
+async def list_investments():
+    """List all investment transactions for the current user."""
+    return database.list_investment_transactions(user_id=_user_id())
+
+
+@app.post("/wealth/investments")
+async def create_investment(body: InvestmentTransactionCreate):
+    """Create an investment transaction (BUY/SELL/DIVIDEND)."""
+    row = database.create_investment_transaction(
+        ticker=body.ticker,
+        stock_name=body.stock_name,
+        transaction_type=body.transaction_type,
+        quantity=body.quantity,
+        price=body.price,
+        fees=body.fees or 0,
+        date=body.date,
+        broker=body.broker,
+        notes=body.notes,
+        user_id=_user_id(),
+    )
+    return row
+
+
+@app.get("/wealth/investments/{tx_id}")
+async def get_investment(tx_id: int):
+    """Get one investment transaction."""
+    row = database.get_investment_transaction(tx_id, user_id=_user_id())
+    if not row:
+        raise HTTPException(status_code=404, detail="Investment transaction not found")
+    return row
+
+
+@app.put("/wealth/investments/{tx_id}")
+async def update_investment(tx_id: int, body: InvestmentTransactionUpdate):
+    """Update an investment transaction."""
+    row = database.get_investment_transaction(tx_id, user_id=_user_id())
+    if not row:
+        raise HTTPException(status_code=404, detail="Investment transaction not found")
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
+    database.update_investment_transaction(tx_id, **updates)
+    return database.get_investment_transaction(tx_id, user_id=_user_id())
+
+
+@app.delete("/wealth/investments/{tx_id}")
+async def delete_investment(tx_id: int):
+    """Delete an investment transaction."""
+    if not database.delete_investment_transaction(tx_id, user_id=_user_id()):
+        raise HTTPException(status_code=404, detail="Investment transaction not found")
+    return {"ok": True}
+
+
+@app.get("/wealth/portfolio")
+async def portfolio_summary():
+    """Portfolio holdings and summary (from transactions; current prices from mock/provider)."""
+    import wealth_portfolio_service as wps
+    import wealth_stock_service as wss
+    uid = _user_id()
+    transactions = database.list_investment_transactions(user_id=uid)
+    tickers = list({(t.get("ticker") or "").strip().upper() for t in transactions if (t.get("ticker") or "").strip()})
+    current_prices = wss.get_current_prices_for_tickers(tickers)
+    return wps.get_portfolio_summary(user_id=uid, current_prices=current_prices, include_enrichment=True)
+
+
+@app.get("/wealth/manager")
+async def portfolio_manager():
+    """Portfolio Manager: allocation by sector, diversification score, stocks that work for you, rebalancing."""
+    import wealth_stock_service as wss
+    return wss.get_portfolio_manager_view(user_id=_user_id())
+
+
+@app.get("/wealth/cashflow")
+async def cashflow_summary(year: int = None, month: int = None):
+    """Monthly cashflow: income, expenses, invested, net savings, free cash, ratios."""
+    now = datetime.now()
+    y, m = year or now.year, month or now.month
+    import wealth_cashflow_service as cf
+    return cf.get_cashflow_summary(y, m, user_id=_user_id())
+
+
+@app.get("/wealth/projections")
+async def projections(
+    year: int = None,
+    month: int = None,
+    portfolio_growth_mode: str = "moderate",
+    monthly_investment_override: float = None,
+    expense_growth_pct: float = None,
+    salary_growth_pct: float = None,
+    target_buffer: float = None,
+):
+    """Projected expenses, surplus, yearly invested, portfolio projection (6m/1y/3y), scenarios."""
+    now = datetime.now()
+    y, m = year or now.year, month or now.month
+    import wealth_projections_service as wproj
+    return wproj.get_projections(
+        y, m, user_id=_user_id(),
+        portfolio_growth_mode=portfolio_growth_mode or "moderate",
+        monthly_investment_override=monthly_investment_override,
+        expense_growth_pct=expense_growth_pct,
+        salary_growth_pct=salary_growth_pct,
+        target_buffer=target_buffer,
+    )
+
+
+@app.get("/wealth/suggestions")
+async def suggestions(year: int = None, month: int = None):
+    """Grounded suggestions from app data (expense ratio, concentration, free cash, etc.)."""
+    now = datetime.now()
+    y, m = year or now.year, month or now.month
+    import wealth_suggestions_service as wsug
+    return wsug.get_suggestions(y, m, user_id=_user_id())
+
+
+@app.get("/wealth/overview")
+async def wealth_overview(year: int = None, month: int = None):
+    """Aggregated overview: summary strip, priority alerts, next actions, wealth score, net worth and goals preview."""
+    now = datetime.now()
+    y, m = year or now.year, month or now.month
+    import wealth_overview_service as wov
+    return wov.get_overview(user_id=_user_id(), year=y, month=m)
+
+
+@app.get("/wealth/score")
+async def wealth_score():
+    """Wealth / Money Health Score 0-100 with contributing factors."""
+    import wealth_score_service as ws
+    return ws.compute_wealth_score(user_id=_user_id())
+
+
+@app.get("/wealth/net-worth")
+async def net_worth(year: int = None, month: int = None):
+    """Net worth: assets (free cash + portfolio) minus liabilities."""
+    now = datetime.now()
+    y, m = year or now.year, month or now.month
+    import wealth_networth_service as nw
+    return nw.get_net_worth(user_id=_user_id(), year=y, month=m)
+
+
+@app.get("/wealth/watchlist")
+async def list_watchlist():
+    """List watchlist items."""
+    return database.list_watchlist(user_id=_user_id())
+
+
+@app.post("/wealth/watchlist")
+async def add_watchlist_item(body: dict):
+    """Add or update watchlist item (ticker required; stock_name, target_buy_price, current_price, sector, notes optional)."""
+    ticker = (body.get("ticker") or "").strip().upper()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="ticker required")
+    wid = database.add_watchlist_item(
+        ticker,
+        stock_name=body.get("stock_name"),
+        target_buy_price=body.get("target_buy_price"),
+        current_price=body.get("current_price"),
+        sector=body.get("sector"),
+        notes=body.get("notes"),
+        user_id=_user_id(),
+    )
+    row = next((r for r in database.list_watchlist(user_id=_user_id()) if r.get("id") == wid or r.get("ticker") == ticker), None)
+    return row or {"id": wid, "ticker": ticker}
+
+
+@app.put("/wealth/watchlist/{item_id}")
+async def update_watchlist_item(item_id: int, body: dict):
+    """Update watchlist item (target_buy_price, current_price, notes)."""
+    ok = database.update_watchlist_item(
+        item_id,
+        target_buy_price=body.get("target_buy_price"),
+        current_price=body.get("current_price"),
+        notes=body.get("notes"),
+        user_id=_user_id(),
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Watchlist item not found")
+    row = next((r for r in database.list_watchlist(user_id=_user_id()) if r.get("id") == item_id), None)
+    return row or {"id": item_id}
+
+
+@app.delete("/wealth/watchlist/{item_id}")
+async def delete_watchlist_item(item_id: int):
+    """Remove watchlist item."""
+    if not database.delete_watchlist_item(item_id, user_id=_user_id()):
+        raise HTTPException(status_code=404, detail="Watchlist item not found")
+    return {"ok": True}
+
+
+@app.get("/wealth/liabilities")
+async def list_liabilities():
+    """List liabilities for net worth."""
+    return database.list_liabilities(user_id=_user_id())
+
+
+@app.post("/wealth/liabilities")
+async def create_liability(body: dict):
+    """Create liability (name, balance required; liability_type, notes optional)."""
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    balance = float(body.get("balance", 0))
+    lid = database.create_liability(
+        name,
+        balance,
+        liability_type=body.get("liability_type"),
+        notes=body.get("notes"),
+        user_id=_user_id(),
+    )
+    row = next((r for r in database.list_liabilities(user_id=_user_id()) if r.get("id") == lid), None)
+    return row or {"id": lid, "name": name, "balance": balance}
+
+
+@app.put("/wealth/liabilities/{liability_id}")
+async def update_liability(liability_id: int, body: dict):
+    """Update liability."""
+    ok = database.update_liability(
+        liability_id,
+        name=body.get("name"),
+        balance=body.get("balance"),
+        liability_type=body.get("liability_type"),
+        notes=body.get("notes"),
+        user_id=_user_id(),
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Liability not found")
+    row = next((r for r in database.list_liabilities(user_id=_user_id()) if r.get("id") == liability_id), None)
+    return row or {"id": liability_id}
+
+
+@app.delete("/wealth/liabilities/{liability_id}")
+async def delete_liability(liability_id: int):
+    """Delete liability."""
+    if not database.delete_liability(liability_id, user_id=_user_id()):
+        raise HTTPException(status_code=404, detail="Liability not found")
+    return {"ok": True}
+
+
+@app.get("/wealth/stock/search")
+async def stock_search(q: str = ""):
+    """Search/list stocks by ticker or name. Returns list of stock details."""
+    import wealth_stock_service as wss
+    return wss.search_stocks(query=q)
+
+
+@app.get("/wealth/stock/diversification")
+async def stock_diversification():
+    """Best stocks for your case: suggestions to diversify (sectors you don't hold)."""
+    import wealth_stock_service as wss
+    return wss.get_diversification_suggestions(user_id=_user_id())
+
+
+@app.get("/wealth/stock/details")
+async def stock_details(ticker: str):
+    """Stock search/details (mock or provider). Returns ticker, name, sector, price, etc."""
+    import wealth_stock_service as wss
+    details = wss.get_stock_details(ticker)
+    return StockDetailsResponse(**details)
+
+
+@app.post("/wealth/stock/affordability", response_model=StockAffordabilityResponse)
+async def stock_affordability(body: StockAffordabilityRequest):
+    """Can I buy this stock? Based on free cash, income, expenses, concentration."""
+    import wealth_stock_service as wss
+    result = wss.check_stock_affordability(
+        body.ticker, body.quantity, body.price_per_share, user_id=_user_id()
+    )
+    return StockAffordabilityResponse(**result)
 
 
 # ---------- Finance news (Tavily) ----------

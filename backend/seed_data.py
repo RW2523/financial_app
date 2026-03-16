@@ -124,10 +124,27 @@ def get_sample_expenses_for_months(months: list = None):
     return out
 
 
+def _last_four_months_yyyymm():
+    """Return list of (year, month) for last 4 months including current."""
+    from datetime import datetime
+    now = datetime.now()
+    months = []
+    for i in range(4):
+        m = now.month - i
+        y = now.year
+        while m < 1:
+            m += 12
+            y -= 1
+        months.append((y, m))
+    months.reverse()
+    return months
+
+
 def load_sample_data(user_id: str = None) -> dict:
     """
-    Load sample expenses (last 4 months), 4 limits, and 2 goals.
-    Returns { "expenses": N, "limits": N, "goals": N }.
+    Load sample expenses (last 4 months), 4 limits, 2 goals, and Wealth Hub data:
+    salary records, investment transactions, watchlist items, and a liability.
+    Returns { "expenses": N, "limits": N, "goals": N, "salary_records": N, "investments": N, "watchlist": N, "liabilities": N }.
     """
     database.init_database()
     uid = database._resolve_user_id(user_id)
@@ -147,7 +164,80 @@ def load_sample_data(user_id: str = None) -> dict:
         "spending_reduction", 400.0, 0, "2026-06-30", "food",
         "Reduce monthly food spend to $400", "active", user_id=uid
     )
-    return {"expenses": len(expenses), "limits": 4, "goals": 2}
+
+    # Wealth Hub: salary (monthly pay for last 4 months)
+    months = _last_four_months_yyyymm()
+    salary_count = 0
+    for y, m in months:
+        date_str = f"{y}-{m:02d}-01"
+        database.create_salary_record(
+            date=date_str,
+            source="Employer (sample)",
+            gross_amount=4200.0,
+            deductions=520.0,
+            net_amount=3680.0,
+            bonus_amount=0 if m % 3 != 0 else 300.0,
+            notes="Sample salary",
+            user_id=uid,
+        )
+        salary_count += 1
+
+    # Wealth Hub: investment transactions (BUY) so portfolio has holdings
+    investments = [
+        ("AAPL", "Apple Inc", "2025-11-01", 5, 175.0),
+        ("AAPL", "Apple Inc", "2025-12-10", 3, 182.0),
+        ("MSFT", "Microsoft Corp", "2025-11-15", 2, 380.0),
+        ("GOOGL", "Alphabet Inc", "2025-12-01", 4, 140.0),
+    ]
+    for ticker, name, date_str, qty, price in investments:
+        database.create_investment_transaction(
+            ticker=ticker,
+            stock_name=name,
+            transaction_type="BUY",
+            quantity=qty,
+            price=price,
+            fees=0,
+            date=date_str,
+            broker="Sample Broker",
+            notes="Sample investment",
+            user_id=uid,
+        )
+    investment_count = len(investments)
+
+    # Wealth Hub: watchlist
+    watchlist_items = [
+        ("NVDA", "NVIDIA Corp", 120.0, "Tech"),
+        ("AMZN", "Amazon.com Inc", 180.0, "Consumer"),
+    ]
+    for ticker, name, target, sector in watchlist_items:
+        database.add_watchlist_item(
+            ticker=ticker,
+            stock_name=name,
+            target_buy_price=target,
+            sector=sector,
+            user_id=uid,
+        )
+    watchlist_count = len(watchlist_items)
+
+    # Wealth Hub: one liability (e.g. student loan)
+    database.create_liability(
+        name="Student loan (sample)",
+        balance=12000.0,
+        liability_type="education",
+        notes="Sample liability for net worth",
+        user_id=uid,
+    )
+    liability_count = 1
+
+    return {
+        "expenses": len(expenses),
+        "limits": 4,
+        "goals": 2,
+        "salary_records": salary_count,
+        "investments": investment_count,
+        "watchlist": watchlist_count,
+        "liabilities": liability_count,
+    }
 
 
 def main():

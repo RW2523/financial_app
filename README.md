@@ -21,7 +21,7 @@ The **Chat** tab is a flexible assistant that can:
 | **"My goals"** / **"Add goal save 5000 by 2026"** | Lists or creates financial goals. |
 | **"Can I afford 100 for dinner?"** | Affordability check (limits, forecast, goals). |
 | **"Forecast"** / **"Alerts"** | Projected month-end spending and limit alerts. |
-| **"Sync Gmail"** / **"Add sample data"** | Syncs Gmail expenses or loads demo data. |
+| **"Sync Gmail"** / **"Add sample data"** | Syncs Gmail expenses or loads demo data (expenses, limits, goals, and Wealth Hub: salary, investments, watchlist, liability). |
 | **"Help"** | Lists everything the assistant can do. |
 
 You can also **upload PDFs or images** (receipts) in Chat; the app uses **OCR** (images) and **PDF text extraction** to pull out expenses and add them. Conversation history is sent so follow-ups (e.g. “By category”) work in context.
@@ -57,6 +57,22 @@ You can also **upload PDFs or images** (receipts) in Chat; the app uses **OCR** 
 | **Affordability check** | “Can I afford this?” using limits, projected spend, recurring, and goals. |
 | **Scenario simulator** | “What if” changes (e.g. reduce category, add one-time expense) without changing real data. |
 
+### Wealth Hub
+
+| Feature | What it does |
+|--------|----------------|
+| **Overview** | Command center: summary strip (income, expenses, portfolio, net worth), priority alerts, “What should I do next?”, wealth flow, goal and net worth previews. |
+| **Income (salary)** | Record salary/income by month; used for cashflow and net worth. |
+| **Investments** | Log BUY/SELL/DIVIDEND transactions; portfolio is built from these. |
+| **Portfolio** | Holdings, allocation by sector, latest transactions, dividend summary, unrealized P&L. Optional **real-time stock prices** (set `STOCK_PROVIDER=yfinance`; see SETUP.md). |
+| **Cashflow** | Monthly income vs expenses, ratios, fixed/variable split, investable surplus, month-over-month. |
+| **Projections** | Scenario comparison and projected guidance (6m, 1y, 3y). |
+| **Portfolio Intelligence** | Diversification score, sector gaps, rebalancing suggestions. |
+| **Suggestions** | Prioritized actions (expense ratio, emergency fund, etc.) with “why” and links. |
+| **Goals** | Wealth-focused goals; preview on overview. |
+| **Watchlist** | Track tickers and target buy prices. |
+| **Net worth** | Assets (cash + portfolio) minus liabilities (e.g. loans). |
+
 ### Review & quality
 
 | Feature | What it does |
@@ -70,7 +86,7 @@ You can also **upload PDFs or images** (receipts) in Chat; the app uses **OCR** 
 |--------|----------------|
 | **Login / register** | Create an account with username/password; optionally set salary, monthly budget, and currency. |
 | **Default login** | Try the app with a demo account (username/password: `demo` / `demo`) and sample data. |
-| **Settings** | Account info, Backend API URL, Gmail sync, **Clear all data**, **Add sample data**. |
+| **Settings** | Account info, Backend API URL, Gmail sync, **Clear all data** (includes Wealth Hub), **Add sample data** (expenses, limits, goals, and Wealth Hub: salary, investments, watchlist, liability). |
 
 ---
 
@@ -78,13 +94,13 @@ You can also **upload PDFs or images** (receipts) in Chat; the app uses **OCR** 
 
 - **Backend:** FastAPI, SQLite, Ollama (LLM), Whisper (speech-to-text, optional)
 - **Frontend:** React (Vite, TypeScript, Tailwind, Recharts) or Streamlit
-- **Optional:** Telegram (python-telegram-bot), Gmail (Google APIs), EasyOCR (receipt images), PyMuPDF (PDF text), Tavily (finance news)
+- **Optional:** Telegram (python-telegram-bot), Gmail (Google APIs), EasyOCR (receipt images), PyMuPDF (PDF text), Tavily (finance news), yfinance (real-time stock prices in Wealth Hub)
 
 ---
 
 ## Documentation
 
-- **[SETUP.md](SETUP.md)** — Prerequisites, one-time setup, how to run (script / Docker / manual), optional Telegram/Gmail/sample data, environment variables, and troubleshooting.
+- **[SETUP.md](SETUP.md)** — Prerequisites, one-time setup, how to run (script / Docker / manual), optional Telegram/Gmail/sample data, Wealth Hub real-time stocks (`STOCK_PROVIDER`), environment variables, and troubleshooting.
 - **API docs** — When the backend is running: **http://127.0.0.1:8000/docs**
 
 ---
@@ -94,7 +110,7 @@ You can also **upload PDFs or images** (receipts) in Chat; the app uses **OCR** 
 ```
 financial_app/
 ├── backend/              # FastAPI app, database, services
-│   ├── main.py           # Routes (auth, expenses, limits, goals, chat, Gmail, admin, etc.)
+│   ├── main.py           # Routes (auth, expenses, limits, goals, chat, Gmail, admin, wealth, etc.)
 │   ├── chat_service.py   # Unified chat (add expense / ask / actions)
 │   ├── chat_actions.py   # Chat action layer (limits, goals, affordability, forecast, Gmail, help)
 │   ├── document_service.py  # OCR + PDF text extraction for document uploads
@@ -102,6 +118,8 @@ financial_app/
 │   ├── extraction_service.py
 │   ├── llm_service.py
 │   ├── audio_service.py  # Whisper (voice)
+│   ├── seed_data.py      # Sample data (expenses, limits, goals, Wealth Hub)
+│   ├── wealth_*.py       # Wealth Hub: overview, portfolio, cashflow, projections, suggestions, net worth, stock (mock/live)
 │   └── ...
 ├── frontend-react/       # React UI (Vite, Tailwind, Recharts)
 ├── frontend/             # Streamlit UI

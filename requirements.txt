@@ -24,3 +24,5 @@ google-auth-oauthlib>=1.1.0
 google-auth-httplib2>=0.1.1
 pytest>=7.0.0
 tavily-python>=0.3.0
+# Optional: real-time stock prices in Wealth Hub (set STOCK_PROVIDER=yfinance)
+yfinance>=0.2.36

@@ -6,6 +6,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import ExpensesLayout from "./components/ExpensesLayout";
 import DashboardLayout from "./components/DashboardLayout";
 import BudgetLayout from "./components/BudgetLayout";
+import WealthHubLayout from "./components/WealthHubLayout";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Chat from "./pages/Chat";
@@ -21,6 +22,17 @@ import Affordability from "./pages/Affordability";
 import Simulator from "./pages/Simulator";
 import Settings from "./pages/Settings";
 import FinanceNews from "./pages/FinanceNews";
+import WealthSalary from "./pages/WealthSalary";
+import WealthInvestments from "./pages/WealthInvestments";
+import WealthPortfolio from "./pages/WealthPortfolio";
+import WealthCashflow from "./pages/WealthCashflow";
+import WealthProjections from "./pages/WealthProjections";
+import WealthSuggestions from "./pages/WealthSuggestions";
+import WealthManager from "./pages/WealthManager";
+import WealthOverview from "./pages/WealthOverview";
+import WealthGoals from "./pages/WealthGoals";
+import WealthWatchlist from "./pages/WealthWatchlist";
+import WealthNetWorth from "./pages/WealthNetWorth";
 
 function App() {
   return (
@@ -52,6 +64,21 @@ function App() {
               <Route path="limits" element={<Limits />} />
               <Route path="affordability" element={<Affordability />} />
               <Route path="simulator" element={<Simulator />} />
+            </Route>
+            {/* Wealth Hub: Overview, Income, Investments, Portfolio, Cashflow, Projections, Manager, Suggestions */}
+            <Route path="wealth" element={<WealthHubLayout />}>
+              <Route index element={<Navigate to="/wealth/overview" replace />} />
+              <Route path="overview" element={<WealthOverview />} />
+              <Route path="salary" element={<WealthSalary />} />
+              <Route path="investments" element={<WealthInvestments />} />
+              <Route path="portfolio" element={<WealthPortfolio />} />
+              <Route path="manager" element={<WealthManager />} />
+              <Route path="cashflow" element={<WealthCashflow />} />
+              <Route path="projections" element={<WealthProjections />} />
+              <Route path="suggestions" element={<WealthSuggestions />} />
+              <Route path="goals" element={<WealthGoals />} />
+              <Route path="watchlist" element={<WealthWatchlist />} />
+              <Route path="net-worth" element={<WealthNetWorth />} />
             </Route>
             <Route path="goals" element={<Goals />} />
             <Route path="news" element={<FinanceNews />} />

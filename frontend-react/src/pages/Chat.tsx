@@ -48,7 +48,7 @@ export default function Chat() {
     setMessages((prev) => [...prev, { role, content, transcript }]);
   };
 
-  const handleResponse = (res: ChatResponse, userText: string) => {
+  const handleResponse = (res: ChatResponse, _userText: string) => {
     if (res.type === "expense_added") {
       append("assistant", res.message);
     } else {

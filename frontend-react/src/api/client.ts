@@ -312,12 +312,36 @@ export async function syncGmail(body?: { query?: string; max_results?: number })
   return apiFetch("/gmail/sync", { method: "POST", body: JSON.stringify(body ?? {}) });
 }
 
-// Clear all data (Settings)
-export async function clearAllData(): Promise<{ ok: boolean; deleted: { expenses: number; limits: number; goals: number; recurring: number; gmail_processed: number } }> {
+// Clear all data (Settings). Backend also returns wealth table counts when present.
+export async function clearAllData(): Promise<{
+  ok: boolean;
+  deleted: {
+    expenses: number;
+    limits: number;
+    goals: number;
+    recurring: number;
+    gmail_processed: number;
+    salary_income?: number;
+    investment_transactions?: number;
+    portfolio_snapshots?: number;
+    stock_watchlist?: number;
+    wealth_liabilities?: number;
+  };
+}> {
   return apiFetch("/admin/clear-data", { method: "POST", body: JSON.stringify({ confirm: true }) });
 }
 
-export async function addSampleData(): Promise<{ ok: boolean; expenses: number; limits: number; goals: number }> {
+// Add sample data (expenses, limits, goals, and Wealth Hub: salary, investments, watchlist, liabilities).
+export async function addSampleData(): Promise<{
+  ok: boolean;
+  expenses: number;
+  limits: number;
+  goals: number;
+  salary_records?: number;
+  investments?: number;
+  watchlist?: number;
+  liabilities?: number;
+}> {
   return apiFetch("/admin/seed-sample-data", { method: "POST" });
 }
 
@@ -379,4 +403,416 @@ export async function authRegister(params: {
 // Health
 export async function apiHealth(): Promise<{ status?: string }> {
   return apiFetch("/");
+}
+
+// ---------- Wealth Hub ----------
+
+export interface SalaryRecord {
+  id: number;
+  date: string;
+  source: string;
+  gross_amount: number;
+  deductions: number;
+  net_amount: number;
+  bonus_amount: number;
+  notes?: string | null;
+  created_at?: string;
+}
+
+export interface SalarySummary {
+  year: number;
+  month: number;
+  net_income: number;
+  bonus_total: number;
+  gross_total?: number;
+  deductions_total?: number;
+  record_count?: number;
+}
+
+export async function getSalaryRecords(params?: { year?: number; month?: number }): Promise<SalaryRecord[]> {
+  const search = new URLSearchParams();
+  if (params?.year != null) search.set("year", String(params.year));
+  if (params?.month != null) search.set("month", String(params.month));
+  const qs = search.toString();
+  return apiFetch<SalaryRecord[]>(`/wealth/salary${qs ? `?${qs}` : ""}`);
+}
+
+export async function createSalaryRecord(payload: {
+  date: string;
+  source: string;
+  gross_amount: number;
+  deductions?: number;
+  net_amount?: number;
+  bonus_amount?: number;
+  notes?: string | null;
+}): Promise<SalaryRecord> {
+  return apiFetch<SalaryRecord>("/wealth/salary", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateSalaryRecord(id: number, payload: Partial<SalaryRecord>): Promise<SalaryRecord> {
+  return apiFetch<SalaryRecord>(`/wealth/salary/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export async function deleteSalaryRecord(id: number): Promise<void> {
+  await apiFetch(`/wealth/salary/${id}`, { method: "DELETE" });
+}
+
+export async function getSalarySummary(year?: number, month?: number): Promise<SalarySummary> {
+  const params: Record<string, number> = {};
+  if (year != null) params.year = year;
+  if (month != null) params.month = month;
+  return apiFetch<SalarySummary>("/wealth/salary/summary", { params });
+}
+
+export interface InvestmentTransaction {
+  id: number;
+  ticker: string;
+  stock_name?: string | null;
+  transaction_type: string;
+  quantity: number;
+  price: number;
+  fees: number;
+  date: string;
+  broker?: string | null;
+  notes?: string | null;
+  created_at?: string;
+}
+
+export async function getInvestmentTransactions(): Promise<InvestmentTransaction[]> {
+  return apiFetch<InvestmentTransaction[]>("/wealth/investments");
+}
+
+export async function createInvestmentTransaction(payload: {
+  ticker: string;
+  stock_name?: string | null;
+  transaction_type: string;
+  quantity: number;
+  price: number;
+  fees?: number;
+  date: string;
+  broker?: string | null;
+  notes?: string | null;
+}): Promise<InvestmentTransaction> {
+  return apiFetch<InvestmentTransaction>("/wealth/investments", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateInvestmentTransaction(id: number, payload: Partial<InvestmentTransaction>): Promise<InvestmentTransaction> {
+  return apiFetch<InvestmentTransaction>(`/wealth/investments/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export async function deleteInvestmentTransaction(id: number): Promise<void> {
+  await apiFetch(`/wealth/investments/${id}`, { method: "DELETE" });
+}
+
+export interface PortfolioHolding {
+  ticker: string;
+  stock_name: string;
+  quantity: number;
+  avg_buy_price: number;
+  total_invested: number;
+  realized_pnl: number;
+  current_price?: number | null;
+  current_value?: number | null;
+  unrealized_pnl?: number | null;
+}
+
+export interface PortfolioSummary {
+  holdings: PortfolioHolding[];
+  total_invested: number;
+  total_realized_pnl: number;
+  total_current_value: number;
+  total_unrealized_pnl: number;
+  largest_holding?: { ticker: string; value: number; pct: number } | null;
+  best_performer?: { ticker: string; unrealized_pnl: number } | null;
+  worst_performer?: { ticker: string; unrealized_pnl: number } | null;
+  allocation_by_sector?: Record<string, number>;
+  latest_transactions?: { id?: number; date?: string; ticker?: string; transaction_type?: string; quantity?: number; price?: number }[];
+  dividend_summary?: { year: number; total_dividends: number };
+}
+
+export async function getPortfolioSummary(): Promise<PortfolioSummary> {
+  return apiFetch<PortfolioSummary>("/wealth/portfolio");
+}
+
+export interface CashflowSummary {
+  year: number;
+  month: number;
+  total_income: number;
+  total_expenses: number;
+  total_invested: number;
+  net_savings: number;
+  free_cash: number;
+  savings_ratio: number;
+  investment_ratio: number;
+  expense_ratio: number;
+  safe_investable_surplus?: number;
+  aggressive_investable_surplus?: number;
+  remaining_buffer?: number;
+  fixed_expenses?: number;
+  variable_expenses?: number;
+  mom_previous_income?: number;
+  mom_previous_expenses?: number;
+  mom_previous_invested?: number;
+  mom_previous_savings?: number;
+  mom_delta_income?: number;
+  mom_delta_expenses?: number;
+  mom_delta_invested?: number;
+  mom_delta_savings?: number;
+}
+
+export async function getCashflowSummary(year?: number, month?: number): Promise<CashflowSummary> {
+  const params: Record<string, number> = {};
+  if (year != null) params.year = year;
+  if (month != null) params.month = month;
+  return apiFetch<CashflowSummary>("/wealth/cashflow", { params });
+}
+
+export interface ProjectionScenario {
+  id: string;
+  label: string;
+  description: string;
+  projected_monthly_surplus: number;
+  projected_yearly_invested: number;
+  portfolio_1y: number;
+}
+
+export interface ProjectionsSummary {
+  year: number;
+  month: number;
+  projected_end_of_month_expenses: number;
+  projected_monthly_surplus: number;
+  projected_yearly_invested: number;
+  portfolio_projection: { "6m": number; "1y": number; "3y": number };
+  portfolio_growth_mode: string;
+  annual_return_assumption?: number;
+  current_portfolio_value?: number;
+  scenarios?: ProjectionScenario[];
+}
+
+export async function getProjections(year?: number, month?: number, portfolio_growth_mode?: string): Promise<ProjectionsSummary> {
+  const params: Record<string, string | number> = {};
+  if (year != null) params.year = year;
+  if (month != null) params.month = month;
+  if (portfolio_growth_mode) params.portfolio_growth_mode = portfolio_growth_mode;
+  return apiFetch<ProjectionsSummary>("/wealth/projections", { params });
+}
+
+export interface Suggestion {
+  id: string;
+  title: string;
+  message: string;
+  why_this_matters?: string;
+  destination?: string;
+  metric: string;
+  value: number;
+  severity: string;
+}
+
+export async function getSuggestions(year?: number, month?: number): Promise<{ year: number; month: number; suggestions: Suggestion[] }> {
+  const params: Record<string, number> = {};
+  if (year != null) params.year = year;
+  if (month != null) params.month = month;
+  return apiFetch("/wealth/suggestions", { params });
+}
+
+export interface StockDetails {
+  ticker: string;
+  stock_name?: string | null;
+  sector?: string | null;
+  current_price?: number | null;
+  change?: number | null;
+  market_cap?: string | null;
+  pe_ratio?: number | null;
+  dividend_yield?: number | null;
+  range_52w?: string | null;
+  source: string;
+}
+
+export async function getStockDetails(ticker: string): Promise<StockDetails> {
+  return apiFetch<StockDetails>("/wealth/stock/details", { params: { ticker: ticker.trim() } });
+}
+
+/** Search/list stocks by ticker or name. Empty q returns all. */
+export async function searchStocks(q: string = ""): Promise<StockDetails[]> {
+  return apiFetch<StockDetails[]>("/wealth/stock/search", { params: q ? { q } : {} });
+}
+
+export interface DiversificationSuggestion extends StockDetails {
+  reason?: string;
+}
+
+export interface DiversificationResult {
+  your_holdings: string[];
+  your_sectors: string[];
+  suggestions: DiversificationSuggestion[];
+}
+
+export async function getDiversificationSuggestions(): Promise<DiversificationResult> {
+  return apiFetch<DiversificationResult>("/wealth/stock/diversification");
+}
+
+/** Portfolio Manager / Portfolio Intelligence */
+export interface PortfolioManagerView {
+  total_portfolio_value: number;
+  allocation_by_sector: Record<string, number>;
+  diversification_score: number;
+  diversification_explanation?: string;
+  sector_gaps?: string[];
+  rebalancing_impact_preview?: { current_score: number; potential_score: number; message: string };
+  stocks_that_work_for_you: {
+    ticker: string;
+    stock_name?: string | null;
+    sector?: string | null;
+    current_price?: number | null;
+    dividend_yield?: number | null;
+    why_for_you: string;
+  }[];
+  rebalancing_suggestions: {
+    sector: string;
+    suggestion: string;
+    top_pick: string;
+    top_pick_name?: string;
+    price?: number;
+  }[];
+  your_holdings_count: number;
+  sectors_held: string[];
+}
+
+export async function getPortfolioManagerView(): Promise<PortfolioManagerView> {
+  return apiFetch<PortfolioManagerView>("/wealth/manager");
+}
+
+export interface StockAffordabilityResult {
+  affordable: boolean;
+  message: string;
+  free_cash: number;
+  cost: number;
+  concentration_risk?: boolean;
+  reasons: string[];
+}
+
+export async function checkStockAffordability(payload: {
+  ticker: string;
+  quantity: number;
+  price_per_share: number;
+}): Promise<StockAffordabilityResult> {
+  return apiFetch<StockAffordabilityResult>("/wealth/stock/affordability", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------- Wealth Overview, Score, Net Worth ----------
+
+export interface WealthOverviewResponse {
+  year: number;
+  month: number;
+  summary_strip: {
+    net_income_this_month: number;
+    total_expenses_this_month: number;
+    free_cash_this_month: number;
+    invested_this_month: number;
+    portfolio_value: number;
+    net_worth?: number | null;
+    wealth_score?: number | null;
+  };
+  priority_alerts: { id: string; title: string; message: string; severity: string; destination?: string }[];
+  next_actions: { action: string; destination: string; reason: string }[];
+  wealth_score: number | null;
+  wealth_score_factors: Record<string, number>;
+  net_worth_preview: { net_worth: number; total_assets: number; total_liabilities: number; delta_vs_previous_month?: number | null } | null;
+  goals_preview: { id: number; description: string; current: number; target: number; progress_pct: number }[];
+  has_goals: boolean;
+}
+
+export async function getWealthOverview(year?: number, month?: number): Promise<WealthOverviewResponse> {
+  const params: Record<string, number> = {};
+  if (year != null) params.year = year;
+  if (month != null) params.month = month;
+  return apiFetch<WealthOverviewResponse>("/wealth/overview", { params });
+}
+
+export async function getWealthScore(): Promise<{ score: number; factors: Record<string, number>; weights: Record<string, number> }> {
+  return apiFetch("/wealth/score");
+}
+
+export interface NetWorthResponse {
+  year: number;
+  month: number;
+  total_assets: number;
+  total_liabilities: number;
+  net_worth: number;
+  assets_breakdown: { free_cash: number; portfolio_value: number };
+  liabilities_count: number;
+  delta_vs_previous_month?: number | null;
+}
+
+export async function getNetWorth(year?: number, month?: number): Promise<NetWorthResponse> {
+  const params: Record<string, number> = {};
+  if (year != null) params.year = year;
+  if (month != null) params.month = month;
+  return apiFetch<NetWorthResponse>("/wealth/net-worth", { params });
+}
+
+// ---------- Watchlist ----------
+
+export interface WatchlistItem {
+  id: number;
+  ticker: string;
+  stock_name?: string | null;
+  target_buy_price?: number | null;
+  current_price?: number | null;
+  sector?: string | null;
+  notes?: string | null;
+  added_at?: string;
+}
+
+export async function getWatchlist(): Promise<WatchlistItem[]> {
+  return apiFetch<WatchlistItem[]>("/wealth/watchlist");
+}
+
+export async function addWatchlistItem(payload: {
+  ticker: string;
+  stock_name?: string | null;
+  target_buy_price?: number | null;
+  current_price?: number | null;
+  sector?: string | null;
+  notes?: string | null;
+}): Promise<WatchlistItem> {
+  return apiFetch<WatchlistItem>("/wealth/watchlist", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateWatchlistItem(id: number, payload: { target_buy_price?: number; current_price?: number; notes?: string }): Promise<WatchlistItem> {
+  return apiFetch<WatchlistItem>(`/wealth/watchlist/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export async function deleteWatchlistItem(id: number): Promise<void> {
+  await apiFetch(`/wealth/watchlist/${id}`, { method: "DELETE" });
+}
+
+// ---------- Liabilities ----------
+
+export interface Liability {
+  id: number;
+  name: string;
+  balance: number;
+  liability_type?: string | null;
+  notes?: string | null;
+  updated_at?: string;
+}
+
+export async function getLiabilities(): Promise<Liability[]> {
+  return apiFetch<Liability[]>("/wealth/liabilities");
+}
+
+export async function createLiability(payload: { name: string; balance: number; liability_type?: string | null; notes?: string | null }): Promise<Liability> {
+  return apiFetch<Liability>("/wealth/liabilities", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateLiability(id: number, payload: Partial<Liability>): Promise<Liability> {
+  return apiFetch<Liability>(`/wealth/liabilities/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export async function deleteLiability(id: number): Promise<void> {
+  await apiFetch(`/wealth/liabilities/${id}`, { method: "DELETE" });
 }

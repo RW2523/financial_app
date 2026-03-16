@@ -28,6 +28,7 @@ This document explains **what you need** and **how to run** SelavAI (Personal Fi
 - **Telegram** — Create a bot with [@BotFather](https://t.me/BotFather), get a token, and set `TELEGRAM_BOT_TOKEN`.
 - **Gmail** — To sync expenses from Gmail: Google Cloud project with Gmail API enabled, OAuth credentials, and one-time auth (see [Gmail sync](#optional-gmail-sync) below).
 - **Finance News** — Set `TAVILY_API_KEY` (from [tavily.com](https://tavily.com)) to enable the Finance News tab.
+- **Wealth Hub — real-time stock prices** — Install `yfinance` (`pip install yfinance`) and set `STOCK_PROVIDER=yfinance`. Portfolio and watchlist prices will be fetched from Yahoo Finance on each request (delayed data; no API key required).
 - **Docker** — To run the app with Docker Compose (backend + frontend in containers).
 
 ---
@@ -267,6 +268,7 @@ If the backend was just updated or restarted and Default login shows **“Not Fo
 | `GMAIL_TOKEN_JSON` | Backend Gmail | Path to saved token (default: `backend/token.json`). |
 | `EXPENSE_DEFAULT_USER_ID` | Backend | Default user id when no auth (default: `local`). |
 | `TAVILY_API_KEY` | Backend (Finance News) | API key from [tavily.com](https://tavily.com). Enables the **Finance News** tab. |
+| `STOCK_PROVIDER` | Backend (Wealth Hub) | Set to `yfinance` or `yahoo` to fetch live/delayed stock prices from Yahoo Finance (requires `pip install yfinance`). Omit for static mock prices. |
 
 ---
 

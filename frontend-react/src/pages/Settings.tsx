@@ -63,9 +63,14 @@ export default function Settings() {
     try {
       const res = await clearAllData();
       const d = res.deleted;
-      setClearSuccess(
-        `All data cleared. Deleted: ${d.expenses} expenses, ${d.limits} limits, ${d.goals} goals, ${d.recurring} recurring, ${d.gmail_processed} Gmail records.`
-      );
+      let msg = `All data cleared. Deleted: ${d.expenses} expenses, ${d.limits} limits, ${d.goals} goals, ${d.recurring} recurring, ${d.gmail_processed} Gmail records.`;
+      const wealthCounts: string[] = [];
+      if (typeof d.salary_income === "number") wealthCounts.push(`${d.salary_income} salary`);
+      if (typeof d.investment_transactions === "number") wealthCounts.push(`${d.investment_transactions} investments`);
+      if (typeof d.stock_watchlist === "number") wealthCounts.push(`${d.stock_watchlist} watchlist`);
+      if (typeof d.wealth_liabilities === "number") wealthCounts.push(`${d.wealth_liabilities} liabilities`);
+      if (wealthCounts.length) msg += ` Wealth Hub: ${wealthCounts.join(", ")}.`;
+      setClearSuccess(msg);
       setClearConfirm(false);
     } catch (e) {
       setClearError(e instanceof Error ? e.message : "Failed to clear data.");
@@ -80,9 +85,17 @@ export default function Settings() {
     setSampleLoading(true);
     try {
       const res = await addSampleData();
-      setSampleSuccess(
-        `Sample data added: ${res.expenses} expenses, ${res.limits} limits, ${res.goals} goals. Check Dashboard, View, Limits, and Goals.`
-      );
+      let msg = `Sample data added: ${res.expenses} expenses, ${res.limits} limits, ${res.goals} goals.`;
+      if (res.salary_records != null || res.investments != null || res.watchlist != null || res.liabilities != null) {
+        const parts: string[] = [];
+        if (res.salary_records != null) parts.push(`${res.salary_records} salary`);
+        if (res.investments != null) parts.push(`${res.investments} investments`);
+        if (res.watchlist != null) parts.push(`${res.watchlist} watchlist`);
+        if (res.liabilities != null) parts.push(`${res.liabilities} liabilities`);
+        if (parts.length) msg += ` Wealth Hub: ${parts.join(", ")}.`;
+      }
+      msg += " Check Dashboard, View, Limits, Goals, and Wealth Hub.";
+      setSampleSuccess(msg);
     } catch (e) {
       setSampleError(e instanceof Error ? e.message : "Failed to add sample data.");
     } finally {
@@ -218,7 +231,7 @@ export default function Settings() {
         <div className="card border-emerald-500/30">
           <h3 className="font-medium text-emerald-400 mb-2">Sample data</h3>
           <p className="text-text-secondary text-sm mb-3">
-            Add sample expenses (last 4 months), spending limits, and goals so you can try the app with realistic data.
+            Add sample expenses (last 4 months), spending limits, goals, and Wealth Hub data (salary, investments, watchlist, liability) so you can try the app with realistic data.
           </p>
           <button
             type="button"
@@ -235,7 +248,7 @@ export default function Settings() {
         <div className="card border-red-500/30">
           <h3 className="font-medium text-red-400 mb-2">Clear all data</h3>
           <p className="text-text-secondary text-sm mb-3">
-            Permanently delete all expenses, limits, goals, recurring data, and Gmail sync state. This cannot be undone.
+            Permanently delete all expenses, limits, goals, recurring data, Gmail sync state, and Wealth Hub data (salary, investments, watchlist, liabilities). This cannot be undone.
           </p>
           {!clearConfirm ? (
             <button
